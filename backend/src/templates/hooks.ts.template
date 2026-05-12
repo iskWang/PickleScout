@@ -1,0 +1,26 @@
+import { BeforeAll, AfterAll, Before, After } from '@cucumber/cucumber';
+import { chromium, Browser } from '@playwright/test';
+import type { CustomWorld } from './world';
+
+let browser: Browser;
+
+BeforeAll(async () => {
+  browser = await chromium.launch({ headless: true });
+});
+
+AfterAll(async () => {
+  await browser.close();
+});
+
+Before(async function (this: CustomWorld) {
+  this.context = await browser.newContext();
+  this.page = await this.context.newPage();
+  // Disable animations for test stability (PRD §3.6)
+  await this.page.addStyleTag({
+    content: '*, *::before, *::after { animation-duration: 0s !important; transition-duration: 0s !important; }',
+  });
+});
+
+After(async function (this: CustomWorld) {
+  await this.context.close();
+});

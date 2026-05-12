@@ -1,0 +1,24 @@
+import { defineConfig, devices } from '@playwright/test';
+
+export default defineConfig({
+  testDir: './features',
+  timeout: 30_000,
+  retries: 0,
+  use: {
+    browserName: 'chromium',
+    headless: true,
+    baseURL: process.env.BASE_URL,
+    screenshot: 'only-on-failure',
+    video: 'off',
+  },
+  projects: [
+    {
+      name: 'chromium',
+      use: { ...devices['Desktop Chrome'] },
+    },
+  ],
+  reporter: [
+    ['html', { outputFolder: 'reports/playwright' }],
+    ['junit', { outputFile: 'reports/results.xml' }],
+  ],
+});
