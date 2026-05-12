@@ -27,6 +27,16 @@ pnpm test                     # unit tests
 - Chromium only — no Firefox or WebKit code paths
 - Pinned versions in generated output package.json MUST NOT use ^ or ~ prefixes
 - Redis keys MUST follow the job:{hash} prefix convention
+- PRD Alignment: Field names and event types MUST strictly match `docs/PRD.md`
+- Browser Hygiene: Every Stagehand/Playwright instance MUST be explicitly closed in a `finally` block to prevent resource leaks
+
+## Definition of Done
+Before declaring a task complete, the Agent MUST:
+1. **Typecheck**: Run `pnpm typecheck` in the affected workspace(s) and resolve all errors.
+2. **Lint**: Run `pnpm lint` and ensure no styling or rule violations remain.
+3. **Tests**: Run `pnpm test` and ensure all tests pass (no regressions).
+4. **PRD Sync**: Verify that any new fields or logic strictly follow `docs/PRD.md`.
+5. **Hygiene**: Ensure all temporary files or test artifacts are cleaned up.
 
 ## Boundaries
 Always (no confirmation needed):

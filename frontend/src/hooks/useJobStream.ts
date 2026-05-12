@@ -103,7 +103,7 @@ export function useJobStream(hash: string): JobStreamState {
             }
 
             case 'screenshot':
-              return { ...prev, screenshots: [...prev.screenshots, event.screenshotUrl] };
+              return { ...prev, screenshots: [...prev.screenshots, event.url] };
 
             case 'llm_log':
               return { ...prev, llmLogs: [...prev.llmLogs, event.message] };

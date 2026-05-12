@@ -44,4 +44,24 @@ type JobStatus =
   | 'self_healing'
   | 'completed'
   | 'failed';
+
+### SSE Events (GET /api/jobs/:hash/stream)
+```typescript
+interface StreamEvent {
+  id: number;
+  ts: number;
+  type: 
+    | 'status' 
+    | 'step' 
+    | 'screenshot' 
+    | 'llm_log' 
+    | 'token_usage' 
+    | 'verification' 
+    | 'complete' 
+    | 'error';
+  // ... event-specific fields
+}
+
+// Screenshot event detail
+// { type: 'screenshot', url: string }
 ```

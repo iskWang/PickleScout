@@ -73,7 +73,7 @@ export interface StreamEventBase {
 export type StreamEvent = StreamEventBase & (
   | { type: 'status'; status: JobStatus }
   | { type: 'step'; stepNumber: number; action: string; selector?: string }
-  | { type: 'screenshot'; screenshotUrl: string }
+  | { type: 'screenshot'; url: string }
   | { type: 'llm_log'; message: string }
   | { type: 'token_usage'; delta: TokenUsage; cumulative: TokenUsage }
   | { type: 'verification'; passed: boolean; errors?: string[] }

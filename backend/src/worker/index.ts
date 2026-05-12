@@ -43,14 +43,16 @@ export function startWorker(): Worker {
       const { hash } = job.data;
 
       // Setup job timeout
+      const controller = new AbortController();
       const timeout = setTimeout(async () => {
         // eslint-disable-next-line no-console
         console.error(safeLog({ msg: 'Job timed out', hash }));
         await failJob(hash, 'Job exceeded maximum duration (20 min)');
+        controller.abort(new Error('Job exceeded maximum duration (20 min)'));
       }, JOB_MAX_DURATION);
 
       try {
-        await processJob(hash);
+        await processJob(hash, controller.signal);
       } finally {
         clearTimeout(timeout);
       }
@@ -76,7 +78,7 @@ export function startWorker(): Worker {
 
 // ─── Pipeline Orchestration ───────────────────────────────────────────────────
 
-async function processJob(hash: string): Promise<void> {
+async function processJob(hash: string, signal: AbortSignal): Promise<void> {
   resetJobCounter(hash);
 
   const state = await getJobState(hash);
@@ -86,7 +88,7 @@ async function processJob(hash: string): Promise<void> {
 
   try {
     // Phase 1: Exploration
-    const actionLog = await runExplorer(state);
+    const actionLog = await runExplorer(state, signal);
 
     // Phase 2: LLM Generation
     const freshState = await getJobState(hash);

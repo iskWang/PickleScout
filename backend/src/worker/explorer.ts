@@ -21,7 +21,7 @@
 
 import path from 'path';
 import fs from 'fs/promises';
-import { Stagehand, type V3Options } from '@browserbasehq/stagehand';
+import { V3, type V3Options, type Action } from '@browserbasehq/stagehand';
 import { nanoid } from 'nanoid';
 import type {
   JobState,
@@ -29,11 +29,12 @@ import type {
   ActionLogEntry,
   LLMConfig,
 } from '../types';
-import { updateJobStatus } from '../redis';
+import { updateJobStatus, getJobState } from '../redis';
 import { emitEvent } from './sse';
 import { safeLog } from '../utils/safeLog';
 
 const STORAGE_DIR = process.env.STORAGE_DIR ?? '/storage';
+const EXPLORE_MAX_TIME_MS = 15 * 60 * 1000; // 15 minutes limit for exploration
 
 // ─── LLM config → Stagehand V3Options ────────────────────────────────────────
 
@@ -81,8 +82,18 @@ function buildStagehandOptions(llm: LLMConfig): V3Options {
 
 // ─── Explorer ─────────────────────────────────────────────────────────────────
 
-export async function runExplorer(state: JobState): Promise<ActionLog> {
+export async function runExplorer(state: JobState, signal?: AbortSignal): Promise<ActionLog> {
   const { hash, url, auth, llm, options } = state;
+
+  const withSignal = <T>(promise: Promise<T>): Promise<T> => {
+    if (!signal) return promise;
+    return new Promise<T>((resolve, reject) => {
+      if (signal.aborted) return reject(signal.reason ?? new Error('Aborted'));
+      const onAbort = () => reject(signal.reason ?? new Error('Aborted'));
+      signal.addEventListener('abort', onAbort);
+      promise.then(resolve).catch(reject).finally(() => signal.removeEventListener('abort', onAbort));
+    });
+  };
   const screenshotDir = path.join(STORAGE_DIR, 'screenshots', hash);
   await fs.mkdir(screenshotDir, { recursive: true });
 
@@ -90,8 +101,7 @@ export async function runExplorer(state: JobState): Promise<ActionLog> {
   await emitEvent(hash, { type: 'status', status: 'exploring' });
 
   const stagehandOpts = buildStagehandOptions(llm);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const stagehand = new (Stagehand as any)(stagehandOpts);
+  const stagehand = new V3(stagehandOpts);
 
   const entries: ActionLogEntry[] = [];
   let stepNumber = 0;
@@ -126,45 +136,74 @@ export async function runExplorer(state: JobState): Promise<ActionLog> {
   };
 
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (stagehand as any).init();
+    await stagehand.init();
 
     // ── Handle form auth ──────────────────────────────────────────────────────
     if (auth?.type === 'form') {
-      await (stagehand as any).act(`Navigate to ${auth.loginUrl}`);
+      await withSignal(stagehand.act(`Navigate to ${auth.loginUrl}`));
       await recordEntry({ type: 'goto', url: auth.loginUrl });
 
-      await (stagehand as any).act(`Fill the username or login field with "${auth.username}"`);
+      await withSignal(stagehand.act(`Fill the username or login field with "${auth.username}"`));
       await recordEntry({ type: 'fill', selector: auth.usernameSelector ?? 'username input', value: '[REDACTED]', selectorStrategy: 'css' });
 
-      await (stagehand as any).act(`Fill the password field with the password`);
+      await withSignal(stagehand.act(`Fill the password field with the password`));
       await recordEntry({ type: 'fill', selector: auth.passwordSelector ?? 'password input', value: '[REDACTED]', selectorStrategy: 'css' });
 
-      await (stagehand as any).act('Click the login or sign in submit button');
+      await withSignal(stagehand.act('Click the login or sign in submit button'));
       await recordEntry({ type: 'click', selector: auth.submitSelector ?? 'submit button', selectorStrategy: 'css' });
     }
 
     // ── Navigate to target URL ─────────────────────────────────────────────
-    await (stagehand as any).act(`Navigate to ${url}`);
+    await withSignal(stagehand.act(`Navigate to ${url}`));
     await recordEntry({ type: 'goto', url });
 
     // ── Exploration loop ────────────────────────────────────────────────────
     const hint = state.hint ?? 'Explore CRUD operations: create, read, update, and delete records. Look for forms, buttons, and data tables.';
+    const visitedActions = new Set<string>();
+
+    const exploreStartTime = Date.now();
 
     for (let i = 0; i < options.maxSteps && stepNumber < options.maxSteps; i++) {
-      // Observe current page
-      let observations: Array<{ description: string; selector?: string }>;
+      // 1. Cooperative cancellation: Check time limits
+      if (Date.now() - exploreStartTime > EXPLORE_MAX_TIME_MS) {
+        // eslint-disable-next-line no-console
+        console.warn(safeLog({ msg: 'Exploration max time reached, finishing gracefully.', hash }));
+        break;
+      }
+
+      // 2. Cooperative cancellation: Check if user cancelled or system failed the job
+      const currentState = await getJobState(hash);
+      if (!currentState || currentState.status === 'failed') {
+        // eslint-disable-next-line no-console
+        console.warn(safeLog({ msg: 'Exploration aborted due to job status change.', hash, status: currentState?.status }));
+        break;
+      }
+
+      // Observe current page with the goal/hint in mind
+      let observations: Action[];
       try {
-        observations = await (stagehand as any).observe() as Array<{ description: string; selector?: string }>;
-      } catch {
+        observations = await withSignal(stagehand.observe(hint));
+      } catch (err) {
+        if (signal?.aborted) throw err;
         break;
       }
 
       if (observations.length === 0) break;
 
+      // Filter out actions we've already taken on this specific page
+      const currentUrl = stagehand.context.activePage()?.url() ?? '';
+      const unvisitedObservations = observations.filter(
+        (o) => !visitedActions.has(`${currentUrl}::${o.selector}::${o.description}`)
+      );
+
+      // If we've exhausted all relevant interactive elements here, stop looping
+      if (unvisitedObservations.length === 0) break;
+
+      const unvisitedAction = unvisitedObservations[0];
+
       await recordEntry({
         type: 'observe',
-        text: observations.map((o) => o.description).slice(0, 5).join('; ').slice(0, 300),
+        text: unvisitedObservations.map((o) => o.description).slice(0, 5).join('; ').slice(0, 300),
       });
 
       // Take screenshot every 3 steps
@@ -173,21 +212,27 @@ export async function runExplorer(state: JobState): Promise<ActionLog> {
         const screenshotPath = path.join(screenshotDir, screenshotFilename);
 
         try {
-          await (stagehand as any).act('Take a screenshot of the current page');
+          const page = stagehand.context.activePage() ?? stagehand.context.pages()[0];
+          if (page) {
+            const buf = await page.screenshot();
+            await fs.writeFile(screenshotPath, buf);
+          }
         } catch { /* best-effort */ }
 
         const relPath = path.join('screenshots', hash, screenshotFilename);
         await emitEvent(hash, {
           type: 'screenshot',
-          screenshotUrl: `/api/screenshots/${relPath}`,
+          url: `/api/screenshots/${relPath}`,
         });
       }
 
-      // Let Stagehand explore
+      // Execute the specific unvisited action
       try {
-        await (stagehand as any).act(hint);
-        await recordEntry({ type: 'click', selector: 'interactive element' });
-      } catch {
+        visitedActions.add(`${currentUrl}::${unvisitedAction.selector}::${unvisitedAction.description}`);
+        await withSignal(stagehand.act(unvisitedAction));
+        await recordEntry({ type: 'click', selector: unvisitedAction.description });
+      } catch (err) {
+        if (signal?.aborted) throw err;
         // Navigation or action failed — stop exploration gracefully
         break;
       }
@@ -218,7 +263,7 @@ export async function runExplorer(state: JobState): Promise<ActionLog> {
   } finally {
     // MUST destroy Stagehand instance (PRD constraint)
     try {
-      await (stagehand as any).close();
+      await stagehand.close();
     } catch { /* best-effort */ }
   }
 }

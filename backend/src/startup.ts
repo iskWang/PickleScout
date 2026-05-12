@@ -31,14 +31,11 @@ export async function runStartupTasks(): Promise<void> {
 async function markOrphanJobsFailed(): Promise<void> {
   const redis = getRedisClient();
 
-  // Scan for all job:{hash} keys
+  // Scan for all job:{hash} keys — use scanStream to avoid manual cursor management
   const keys: string[] = [];
-  let cursor = '0';
-  do {
-    const [nextCursor, batch] = await redis.scan(cursor, 'MATCH', 'job:*', 'COUNT', 100);
-    cursor = nextCursor;
-    keys.push(...batch);
-  } while (cursor !== '0');
+  for await (const batch of redis.scanStream({ match: 'job:*', count: 100 })) {
+    keys.push(...(batch as string[]));
+  }
 
   let markedFailed = 0;
   for (const key of keys) {
