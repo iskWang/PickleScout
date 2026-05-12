@@ -1,0 +1,48 @@
+services:
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - '5173:5173'
+    depends_on:
+      - backend
+    environment:
+      - VITE_API_URL=http://localhost:3000
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - '3000:3000'
+    environment:
+      REDIS_URL: redis://redis:6379
+      MAX_CONCURRENT_JOBS: '2'
+      STORAGE_DIR: /storage
+      JOB_TTL_DAYS: '7'
+      PAGE_TIMEOUT_SEC: '30'
+      LLM_CALL_TIMEOUT_SEC: '60'
+      JOB_MAX_DURATION_SEC: '1200'
+      LOG_LEVEL: info
+    volumes:
+      - storage:/storage
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --save 60 1 --loglevel warning
+    # Internal network only — never bind to host port
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    volumes:
+      - redis-data:/data
+
+volumes:
+  storage:
+  redis-data:
