@@ -1,0 +1,29 @@
+.job-status-bar {
+  margin-bottom: var(--space-6);
+}
+
+.jsb-top {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.jsb-url {
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+.jsb-right {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-shrink: 0;
+}
+
+.jsb-step-info {}
+
+.jsb-tokens {
+  font-family: var(--font-mono);
+}

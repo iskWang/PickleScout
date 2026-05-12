@@ -1,0 +1,41 @@
+.form-card {
+  border: 1px solid var(--color-border);
+  position: relative;
+  overflow: hidden;
+}
+
+.form-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, var(--color-brand), var(--color-accent));
+}
+
+.panels-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.input-error {
+  border-color: var(--color-failed) !important;
+  box-shadow: 0 0 0 3px rgba(248, 113, 113, 0.15) !important;
+}
+
+/* Spinner */
+.spinner {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(13, 15, 20, 0.3);
+  border-top-color: #0d0f14;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}

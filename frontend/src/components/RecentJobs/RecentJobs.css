@@ -1,0 +1,53 @@
+.recent-jobs {
+  margin-top: var(--space-8);
+}
+
+.recent-jobs-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-3);
+}
+
+.recent-jobs-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.recent-job-item {
+  display: grid;
+  grid-template-columns: 20px 1fr auto auto;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  text-decoration: none;
+  color: var(--color-text);
+  transition: all var(--transition-fast);
+}
+
+.recent-job-item:hover {
+  border-color: var(--color-brand);
+  background: var(--color-surface-2);
+  color: var(--color-text);
+}
+
+.recent-job-status {
+  font-size: 14px;
+}
+
+.recent-job-url {
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+
+.recent-job-meta {
+  white-space: nowrap;
+}
+
+.recent-job-hash {
+  white-space: nowrap;
+}

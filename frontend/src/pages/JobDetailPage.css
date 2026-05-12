@@ -1,0 +1,81 @@
+.jd-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-6);
+}
+
+.jd-progress-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-4);
+  margin-bottom: var(--space-6);
+}
+
+@media (max-width: 640px) {
+  .jd-progress-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Completed */
+.jd-completed {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.jd-success-card {
+  position: relative;
+  overflow: hidden;
+  border-color: rgba(74, 222, 128, 0.3);
+  box-shadow: var(--shadow-brand);
+}
+
+.jd-success-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, var(--color-brand), var(--color-accent));
+}
+
+.jd-success-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  margin-bottom: var(--space-5);
+}
+
+.jd-success-icon {
+  font-size: 36px;
+  flex-shrink: 0;
+}
+
+.jd-download-actions {
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+/* Failed */
+.jd-failed-card {
+  border-color: rgba(248, 113, 113, 0.3);
+}
+
+.jd-failed-header {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+  margin-bottom: var(--space-5);
+  font-size: 36px;
+}
+
+.jd-failed-actions {
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  margin-top: var(--space-4);
+}
