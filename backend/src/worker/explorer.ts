@@ -136,7 +136,7 @@ export async function runExplorer(state: JobState, signal?: AbortSignal): Promis
   };
 
   try {
-    await stagehand.init();
+    await withSignal(stagehand.init());
 
     // ── Handle form auth ──────────────────────────────────────────────────────
     if (auth?.type === 'form') {
@@ -146,7 +146,7 @@ export async function runExplorer(state: JobState, signal?: AbortSignal): Promis
       await withSignal(stagehand.act(`Fill the username or login field with "${auth.username}"`));
       await recordEntry({ type: 'fill', selector: auth.usernameSelector ?? 'username input', value: '[REDACTED]', selectorStrategy: 'css' });
 
-      await withSignal(stagehand.act(`Fill the password field with the password`));
+      await withSignal(stagehand.act(`Fill the password field with "${auth.password}"`));
       await recordEntry({ type: 'fill', selector: auth.passwordSelector ?? 'password input', value: '[REDACTED]', selectorStrategy: 'css' });
 
       await withSignal(stagehand.act('Click the login or sign in submit button'));
@@ -163,7 +163,7 @@ export async function runExplorer(state: JobState, signal?: AbortSignal): Promis
 
     const exploreStartTime = Date.now();
 
-    for (let i = 0; i < options.maxSteps && stepNumber < options.maxSteps; i++) {
+    while (stepNumber < options.maxSteps) {
       // 1. Cooperative cancellation: Check time limits
       if (Date.now() - exploreStartTime > EXPLORE_MAX_TIME_MS) {
         // eslint-disable-next-line no-console
@@ -201,7 +201,7 @@ export async function runExplorer(state: JobState, signal?: AbortSignal): Promis
 
       const unvisitedAction = unvisitedObservations[0];
 
-      await recordEntry({
+      const observeEntry = await recordEntry({
         type: 'observe',
         text: unvisitedObservations.map((o) => o.description).slice(0, 5).join('; ').slice(0, 300),
       });
@@ -216,21 +216,21 @@ export async function runExplorer(state: JobState, signal?: AbortSignal): Promis
           if (page) {
             const buf = await page.screenshot();
             await fs.writeFile(screenshotPath, buf);
+            const relPath = path.join('screenshots', hash, screenshotFilename);
+            observeEntry.screenshotPath = relPath;
+            await emitEvent(hash, {
+              type: 'screenshot',
+              url: `/api/screenshots/${relPath}`,
+            });
           }
         } catch { /* best-effort */ }
-
-        const relPath = path.join('screenshots', hash, screenshotFilename);
-        await emitEvent(hash, {
-          type: 'screenshot',
-          url: `/api/screenshots/${relPath}`,
-        });
       }
 
       // Execute the specific unvisited action
       try {
         visitedActions.add(`${currentUrl}::${unvisitedAction.selector}::${unvisitedAction.description}`);
         await withSignal(stagehand.act(unvisitedAction));
-        await recordEntry({ type: 'click', selector: unvisitedAction.description });
+        await recordEntry({ type: 'click', selector: unvisitedAction.selector, text: unvisitedAction.description });
       } catch (err) {
         if (signal?.aborted) throw err;
         // Navigation or action failed — stop exploration gracefully
