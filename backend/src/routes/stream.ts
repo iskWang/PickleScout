@@ -32,18 +32,17 @@ export async function streamRoutes(fastify: FastifyInstance): Promise<void> {
         return reply.status(404).send({ error: 'Job not found or expired' });
       }
 
-      // Parse Last-Event-ID for replay
+      // Parse Last-Event-ID for replay; treat non-numeric headers as absent
       const lastEventIdHeader = request.headers['last-event-id'];
-      const lastSeenId = lastEventIdHeader
-        ? parseInt(String(lastEventIdHeader), 10)
-        : undefined;
+      const rawId = lastEventIdHeader ? parseInt(String(lastEventIdHeader), 10) : NaN;
+      const lastSeenId = Number.isNaN(rawId) ? undefined : rawId;
 
       // SSE headers
       reply.raw.writeHead(200, {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',
         Connection: 'keep-alive',
-        'X-Accel-Buffering': 'no', // Disable nginx buffering
+        'X-Accel-Buffering': 'no',
       });
 
       const send = (event: StreamEvent): void => {
@@ -51,55 +50,59 @@ export async function streamRoutes(fastify: FastifyInstance): Promise<void> {
         reply.raw.write(`id: ${event.id}\ndata: ${data}\n\n`);
       };
 
-      // Replay buffered events
-      const buffered = await getSseEvents(hash, lastSeenId);
-      for (const event of buffered) {
-        send(event);
-      }
-
-      // If already terminal, close
-      if (TERMINAL_STATUSES.has(state.status)) {
-        reply.raw.end();
-        return;
-      }
-
-      // Subscribe for live events
       const subscriber = getSseSubscriber();
       const channel = sseChannelForJob(hash);
 
+      let heartbeat: NodeJS.Timeout | null = null;
+      let closed = false;
+
+      const cleanup = (): void => {
+        if (closed) return;
+        closed = true;
+        if (heartbeat) clearInterval(heartbeat);
+        subscriber.unsubscribe(channel).then(() => subscriber.quit());
+        reply.raw.end();
+      };
+
+      // Subscribe before replaying — ensures no live events are missed between replay and subscribe
       await subscriber.subscribe(channel);
 
       subscriber.on('message', (_ch: string, message: string) => {
         try {
           const event = JSON.parse(message) as StreamEvent;
           send(event);
-
-          // Close on terminal event
           if (
             (event.type === 'status' && TERMINAL_STATUSES.has(event.status)) ||
             event.type === 'complete' ||
             event.type === 'error'
           ) {
-            subscriber.unsubscribe(channel).then(() => {
-              subscriber.quit();
-              reply.raw.end();
-            });
+            cleanup();
           }
         } catch {
           // Ignore malformed messages
         }
       });
 
+      // Replay buffered events
+      const buffered = await getSseEvents(hash, lastSeenId);
+      for (const event of buffered) {
+        send(event);
+      }
+
+      // Re-check state after subscribing to catch completions that raced the subscribe
+      const freshState = await getJobState(hash);
+      if (!freshState || TERMINAL_STATUSES.has(freshState.status)) {
+        cleanup();
+        return;
+      }
+
       // Heartbeat every 25s to prevent proxy timeouts
-      const heartbeat = setInterval(() => {
+      heartbeat = setInterval(() => {
         reply.raw.write(': heartbeat\n\n');
       }, 25_000);
 
       // Cleanup on client disconnect
-      request.raw.on('close', () => {
-        clearInterval(heartbeat);
-        subscriber.unsubscribe(channel).then(() => subscriber.quit());
-      });
+      request.raw.on('close', cleanup);
     }
   );
 }

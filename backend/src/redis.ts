@@ -38,7 +38,7 @@ export async function setJobState(state: JobState): Promise<void> {
   const redis = getRedisClient();
   const key = `job:${state.hash}`;
   // safeLog before any storage that touches credentials
-  await redis.set(key, JSON.stringify(safeLog(state)), 'EX', TTL_SECONDS);
+  await redis.set(key, JSON.stringify(state), 'EX', TTL_SECONDS);
 }
 
 export async function getJobState(hash: string): Promise<JobState | null> {

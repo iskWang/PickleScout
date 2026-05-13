@@ -10,8 +10,10 @@ import { generationQueue } from '../worker';
 import {
   setJobState,
   getJobState,
+  updateJobStatus,
   deleteJobState,
 } from '../redis';
+import { emitEvent } from '../worker/sse';
 import type {
   CreateJobRequest,
   CreateJobResponse,
@@ -143,14 +145,20 @@ export async function jobRoutes(fastify: FastifyInstance): Promise<void> {
       return reply.status(404).send({ error: 'Job not found or expired' });
     }
 
-    // If still in queue, remove from BullMQ
+    // Mark failed first — signals cooperative cancellation to the explorer phase
+    await updateJobStatus(hash, { status: 'failed', error: 'Cancelled by user' });
+
+    // Remove from queue if still pending; active jobs drain after their current phase
     const job = await generationQueue.getJob(hash);
     if (job) {
-      await job.remove();
+      try { await job.remove(); } catch { /* active job — Redis flag is the cancellation signal */ }
     }
 
+    await emitEvent(hash, { type: 'error', message: 'Cancelled by user', retryable: false });
+    await emitEvent(hash, { type: 'status', status: 'failed' });
+
     await deleteJobState(hash);
-    fastify.log.info({ msg: 'Job deleted', hash });
+    fastify.log.info(safeLog({ msg: 'Job cancelled', hash }));
 
     return reply.status(204).send();
   });

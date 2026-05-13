@@ -15,6 +15,7 @@ import { spawn } from 'child_process';
 import path from 'path';
 import fs from 'fs/promises';
 import type { JobState, VerificationMode } from '../types';
+import { updateJobStatus } from '../redis';
 import { emitEvent } from './sse';
 
 const STORAGE_DIR = process.env.STORAGE_DIR ?? '/storage';
@@ -33,6 +34,7 @@ export async function runVerifier(
 ): Promise<VerificationResult> {
   const { hash, options } = state;
 
+  await updateJobStatus(hash, { status: 'verifying' });
   await emitEvent(hash, { type: 'status', status: 'verifying' });
 
   switch (options.verificationMode) {
@@ -50,9 +52,9 @@ export async function runVerifier(
 async function runSyntaxCheck(hash: string, artifactDir: string): Promise<VerificationResult> {
   await emitEvent(hash, { type: 'llm_log', message: 'Syntax check: compiling TypeScript…' });
 
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const proc = spawn(
-      'npx',
+      'bunx',
       ['tsc', '--noEmit', '--strict', '--target', 'ES2022', '--module', 'commonjs'],
       {
         cwd: artifactDir,
@@ -65,6 +67,7 @@ async function runSyntaxCheck(hash: string, artifactDir: string): Promise<Verifi
     proc.stderr.on('data', (chunk: Buffer) => errors.push(chunk.toString()));
     proc.stdout.on('data', (chunk: Buffer) => errors.push(chunk.toString()));
 
+    proc.on('error', reject);
     proc.on('close', (code) => {
       const passed = code === 0;
       resolve({ passed, errors: passed ? [] : errors, mode: 'syntax-only' });
@@ -84,19 +87,19 @@ async function runCucumberSmoke(
     message: `Verification: running cucumber-js (${mode} mode)…`,
   });
 
-  const result = await spawnCucumber(artifactDir);
+  const result = await spawnCucumber(hash, artifactDir);
 
   if (!result.passed && mode === 'full') {
     // In full mode, retry once on flake before self-healing
     await emitEvent(hash, { type: 'llm_log', message: 'Flake detected, retrying once…' });
-    const retryResult = await spawnCucumber(artifactDir);
+    const retryResult = await spawnCucumber(hash, artifactDir);
     return { ...retryResult, mode };
   }
 
   return { ...result, mode };
 }
 
-async function spawnCucumber(artifactDir: string): Promise<Pick<VerificationResult, 'passed' | 'errors'>> {
+async function spawnCucumber(hash: string, artifactDir: string): Promise<Pick<VerificationResult, 'passed' | 'errors'>> {
   // Install deps first if needed
   const nodeModulesExist = await fs
     .access(path.join(artifactDir, 'node_modules'))
@@ -105,18 +108,20 @@ async function spawnCucumber(artifactDir: string): Promise<Pick<VerificationResu
 
   if (!nodeModulesExist) {
     await new Promise<void>((resolve, reject) => {
-      const install = spawn('npm', ['install', '--ignore-scripts'], {
+      const install = spawn('bun', ['install', '--ignore-scripts'], {
         cwd: artifactDir,
         timeout: 120_000,
       });
-      install.on('close', (code) => (code === 0 ? resolve() : reject(new Error('npm install failed'))));
+      install.on('error', reject);
+      install.on('close', (code) => (code === 0 ? resolve() : reject(new Error('bun install failed'))));
     });
   }
 
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
+    const resultPath = `/tmp/cucumber-result-${hash}.json`;
     const proc = spawn(
-      'npx',
-      ['cucumber-js', '--format', 'json:/tmp/cucumber-result.json'],
+      'bunx',
+      ['cucumber-js', '--format', `json:${resultPath}`],
       {
         cwd: artifactDir,
         env: {
@@ -131,9 +136,12 @@ async function spawnCucumber(artifactDir: string): Promise<Pick<VerificationResu
     proc.stdout.on('data', (chunk: Buffer) => output.push(chunk.toString()));
     proc.stderr.on('data', (chunk: Buffer) => output.push(chunk.toString()));
 
+    proc.on('error', reject);
     proc.on('close', (code) => {
       const passed = code === 0;
       const errors = passed ? [] : output.filter((l) => l.includes('Error') || l.includes('failed'));
+      // Clean up per-job result file (best-effort)
+      fs.unlink(resultPath).catch(() => undefined);
       resolve({ passed, errors });
     });
   });
@@ -157,11 +165,16 @@ export async function attemptSelfHeal(
   // Build OpenAI client for self-healing LLM call
   const { default: OpenAI } = await import('openai');
   const llm = state.llm;
+
+  if (llm.provider === 'anthropic' || llm.provider === 'gemini') {
+    throw new Error(`Provider '${llm.provider}' is not supported for self-healing; use openai, openrouter, or custom`);
+  }
+
   const client = new OpenAI({
     apiKey: llm.apiKey,
     baseURL: llm.provider === 'openrouter'
       ? (llm.baseURL ?? 'https://openrouter.ai/api/v1')
-      : undefined,
+      : llm.provider === 'custom' ? llm.baseURL : undefined,
     timeout: parseInt(process.env.LLM_CALL_TIMEOUT_SEC ?? '60', 10) * 1000,
   });
 
@@ -194,7 +207,17 @@ Return the repaired files as a JSON object: { "files": [{ "filename": string, "c
     response_format: { type: 'json_object' },
   });
 
-  const content = response.choices[0]?.message?.content ?? '{}';
-  const parsed = JSON.parse(content) as { files: Array<{ filename: string; content: string }> };
-  return parsed.files ?? stepFiles;
+  const raw = response.choices[0]?.message?.content;
+  if (!raw) throw new Error('Self-heal LLM returned empty content');
+
+  let parsed: { files?: Array<{ filename: string; content: string }> };
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error('Self-heal LLM returned invalid JSON');
+  }
+  if (!Array.isArray(parsed?.files)) {
+    throw new Error('Self-heal LLM returned unexpected structure (missing files array)');
+  }
+  return parsed.files;
 }
