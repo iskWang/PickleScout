@@ -10,9 +10,9 @@
 import path from 'path';
 import fs from 'fs/promises';
 import OpenAI from 'openai';
-import { z } from 'zod';
+import { z, ZodError } from 'zod';
 import type { ActionLog, JobState, LLMConfig, TokenUsage } from '../types';
-import { updateJobStatus } from '../redis';
+import { updateJobStatus, getJobState } from '../redis';
 import { emitEvent } from './sse';
 import { safeLog } from '../utils/safeLog';
 
@@ -22,6 +22,10 @@ const STORAGE_DIR = process.env.STORAGE_DIR ?? '/storage';
 // ─── OpenAI Client Factory ─────────────────────────────────────────────────────
 
 function buildOpenAIClient(llm: LLMConfig): OpenAI {
+  if (llm.provider === 'anthropic' || llm.provider === 'gemini') {
+    throw new Error(`Provider '${llm.provider}' is not supported by the generator; use openai, openrouter, or custom`);
+  }
+
   const options: ConstructorParameters<typeof OpenAI>[0] = {
     apiKey: llm.apiKey,
     timeout: LLM_TIMEOUT,
@@ -105,19 +109,24 @@ Generate ${options.maxScenarios} Cucumber .feature file scenarios.`;
 
   const usage = response.usage;
   if (usage) {
-    await emitEvent(state.hash, {
-      type: 'token_usage',
-      delta: {
-        promptTokens: usage.prompt_tokens,
-        completionTokens: usage.completion_tokens,
-        estimatedCostUSD: estimateCost(llm.model, usage.prompt_tokens, usage.completion_tokens),
-      },
-      cumulative: await getCumulativeTokens(state),
-    });
+    const delta: TokenUsage = {
+      promptTokens: usage.prompt_tokens,
+      completionTokens: usage.completion_tokens,
+      estimatedCostUSD: estimateCost(llm.model, usage.prompt_tokens, usage.completion_tokens),
+    };
+    const prior = await getCumulativeTokens(state);
+    const cumulative: TokenUsage = {
+      promptTokens: prior.promptTokens + delta.promptTokens,
+      completionTokens: prior.completionTokens + delta.completionTokens,
+      estimatedCostUSD: prior.estimatedCostUSD + delta.estimatedCostUSD,
+    };
+    await updateJobStatus(state.hash, { tokenUsage: cumulative });
+    await emitEvent(state.hash, { type: 'token_usage', delta, cumulative });
   }
 
-  const content = response.choices[0]?.message?.content ?? '{}';
-  const parsed = FeatureFilesSchema.parse(JSON.parse(content));
+  const raw = response.choices[0]?.message?.content;
+  if (!raw) throw new Error('LLM returned empty content for Pass 1');
+  const parsed = FeatureFilesSchema.parse(JSON.parse(raw));
   return parsed.files;
 }
 
@@ -199,19 +208,24 @@ ${featuresText}`;
 
   const usage = response.usage;
   if (usage) {
-    await emitEvent(state.hash, {
-      type: 'token_usage',
-      delta: {
-        promptTokens: usage.prompt_tokens,
-        completionTokens: usage.completion_tokens,
-        estimatedCostUSD: estimateCost(llm.model, usage.prompt_tokens, usage.completion_tokens),
-      },
-      cumulative: await getCumulativeTokens(state),
-    });
+    const delta: TokenUsage = {
+      promptTokens: usage.prompt_tokens,
+      completionTokens: usage.completion_tokens,
+      estimatedCostUSD: estimateCost(llm.model, usage.prompt_tokens, usage.completion_tokens),
+    };
+    const prior = await getCumulativeTokens(state);
+    const cumulative: TokenUsage = {
+      promptTokens: prior.promptTokens + delta.promptTokens,
+      completionTokens: prior.completionTokens + delta.completionTokens,
+      estimatedCostUSD: prior.estimatedCostUSD + delta.estimatedCostUSD,
+    };
+    await updateJobStatus(state.hash, { tokenUsage: cumulative });
+    await emitEvent(state.hash, { type: 'token_usage', delta, cumulative });
   }
 
-  const content = response.choices[0]?.message?.content ?? '{}';
-  const parsed = StepFilesSchema.parse(JSON.parse(content));
+  const raw = response.choices[0]?.message?.content;
+  if (!raw) throw new Error('LLM returned empty content for Pass 2');
+  const parsed = StepFilesSchema.parse(JSON.parse(raw));
   return parsed.files;
 }
 
@@ -242,7 +256,9 @@ export async function runGenerator(
   try {
     featureFiles = await pass1GenerateFeatures(state, actionLog, client);
   } catch (err) {
-    // Retry once on parse failure (PRD §8.1)
+    if (!(err instanceof SyntaxError) && !(err instanceof ZodError)) throw err;
+    // eslint-disable-next-line no-console
+    console.warn(safeLog({ msg: 'Pass 1 parse error, retrying', hash, err: String(err) }));
     await emitEvent(hash, { type: 'llm_log', message: 'LLM output parse error, retrying Pass 1…' });
     featureFiles = await pass1GenerateFeatures(state, actionLog, client);
   }
@@ -261,6 +277,9 @@ export async function runGenerator(
   try {
     stepFiles = await pass2GenerateSteps(state, actionLog, featureFiles, client);
   } catch (err) {
+    if (!(err instanceof SyntaxError) && !(err instanceof ZodError)) throw err;
+    // eslint-disable-next-line no-console
+    console.warn(safeLog({ msg: 'Pass 2 parse error, retrying', hash, err: String(err) }));
     await emitEvent(hash, { type: 'llm_log', message: 'LLM output parse error, retrying Pass 2…' });
     stepFiles = await pass2GenerateSteps(state, actionLog, featureFiles, client);
   }
@@ -278,10 +297,10 @@ export async function runGenerator(
   await fs.mkdir(path.join(genDir, 'steps'), { recursive: true });
 
   for (const f of featureFiles) {
-    await fs.writeFile(path.join(genDir, 'features', f.filename), f.content, 'utf-8');
+    await fs.writeFile(path.join(genDir, 'features', path.basename(f.filename)), f.content, 'utf-8');
   }
   for (const s of stepFiles) {
-    await fs.writeFile(path.join(genDir, 'steps', s.filename), s.content, 'utf-8');
+    await fs.writeFile(path.join(genDir, 'steps', path.basename(s.filename)), s.content, 'utf-8');
   }
 
   return { featureFiles, stepFiles };
@@ -303,7 +322,6 @@ function estimateCost(model: string, promptTokens: number, completionTokens: num
 }
 
 async function getCumulativeTokens(state: JobState): Promise<TokenUsage> {
-  const { getJobState } = await import('../redis');
   const current = await getJobState(state.hash);
   return current?.tokenUsage ?? { promptTokens: 0, completionTokens: 0, estimatedCostUSD: 0 };
 }
