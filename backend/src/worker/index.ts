@@ -11,7 +11,7 @@
 import { Queue, Worker, type Job } from 'bullmq';
 import path from 'path';
 import fs from 'fs/promises';
-import { getRedisClient, getJobState, updateJobStatus } from '../redis';
+import { getBullRedisClient, getJobState, updateJobStatus } from '../redis';
 import { runExplorer } from './explorer';
 import { runGenerator, rerunPass2 } from './generator';
 import { runVerifier, attemptSelfHeal, checkStepResolution } from './verifier';
@@ -26,7 +26,7 @@ const JOB_MAX_DURATION = parseInt(process.env.JOB_MAX_DURATION_SEC ?? '1200', 10
 // ─── Queue (exported so routes can enqueue) ───────────────────────────────────
 
 export const generationQueue = new Queue('generation', {
-  connection: getRedisClient(),
+  connection: getBullRedisClient(),
   defaultJobOptions: {
     attempts: 1,      // We handle retries ourselves
     removeOnComplete: true,
@@ -58,7 +58,7 @@ export function startWorker(): Worker {
       }
     },
     {
-      connection: getRedisClient(),
+      connection: getBullRedisClient(),
       concurrency: MAX_CONCURRENT,
     }
   );

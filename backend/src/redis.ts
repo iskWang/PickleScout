@@ -16,19 +16,30 @@ const SSE_EVENT_BUFFER_MAX = 50;
 // ─── Singleton ────────────────────────────────────────────────────────────────
 
 let _client: Redis | null = null;
+let _bullClient: Redis | null = null;
 
+function makeClient(maxRetriesPerRequest: number | null): Redis {
+  const client = new Redis(process.env.REDIS_URL ?? 'redis://localhost:6379', {
+    maxRetriesPerRequest,
+    lazyConnect: false,
+  });
+  client.on('error', (err) => {
+    // eslint-disable-next-line no-console
+    console.error('[redis] connection error', err.message);
+  });
+  return client;
+}
+
+/** General-purpose client (commands, state reads/writes) */
 export function getRedisClient(): Redis {
-  if (!_client) {
-    _client = new Redis(process.env.REDIS_URL ?? 'redis://localhost:6379', {
-      maxRetriesPerRequest: 3,
-      lazyConnect: false,
-    });
-    _client.on('error', (err) => {
-      // eslint-disable-next-line no-console
-      console.error('[redis] connection error', err.message);
-    });
-  }
+  if (!_client) _client = makeClient(3);
   return _client;
+}
+
+/** BullMQ client — maxRetriesPerRequest must be null for blocking commands */
+export function getBullRedisClient(): Redis {
+  if (!_bullClient) _bullClient = makeClient(null);
+  return _bullClient;
 }
 
 // ─── Job State ────────────────────────────────────────────────────────────────
