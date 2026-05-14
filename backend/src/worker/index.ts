@@ -100,7 +100,7 @@ async function processJob(hash: string, signal: AbortSignal): Promise<void> {
     const artifactDir = path.join(STORAGE_DIR, 'generated', hash);
 
     // Phase 3: Verification + self-healing loop
-    let verificationResult = await runVerifier(freshState, artifactDir);
+    let verificationResult = await runVerifier(freshState, artifactDir, signal);
     let currentStepFiles = artifact.stepFiles;
     let unhealedScenarios = 0;
     let retries = 0;
@@ -117,7 +117,7 @@ async function processJob(hash: string, signal: AbortSignal): Promise<void> {
       if (!latestState) throw new Error('Job state lost during self-healing');
 
       // Attempt self-heal
-      currentStepFiles = await attemptSelfHeal(latestState, currentStepFiles, verificationResult.errors);
+      currentStepFiles = await attemptSelfHeal(latestState, currentStepFiles, verificationResult.errors, signal);
 
       // Write healed files back
       for (const f of currentStepFiles) {
@@ -125,7 +125,7 @@ async function processJob(hash: string, signal: AbortSignal): Promise<void> {
       }
 
       // Re-verify
-      verificationResult = await runVerifier(latestState, artifactDir);
+      verificationResult = await runVerifier(latestState, artifactDir, signal);
     }
 
     if (!verificationResult.passed) {

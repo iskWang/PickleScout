@@ -35,3 +35,6 @@ data/
 
 # Storage (runtime)
 storage/
+
+# AI review session artifacts
+.agents/review-findings.md

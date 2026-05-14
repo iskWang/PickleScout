@@ -28,7 +28,8 @@ export interface VerificationResult {
 
 export async function runVerifier(
   state: JobState,
-  artifactDir: string
+  artifactDir: string,
+  signal?: AbortSignal
 ): Promise<VerificationResult> {
   const { hash, options } = state;
 
@@ -37,17 +38,17 @@ export async function runVerifier(
 
   switch (options.verificationMode) {
     case 'syntax-only':
-      return runSyntaxCheck(hash, artifactDir);
+      return runSyntaxCheck(hash, artifactDir, signal);
     case 'smoke':
     case 'full':
     default:
-      return runCucumberSmoke(hash, artifactDir, options.verificationMode);
+      return runCucumberSmoke(hash, artifactDir, options.verificationMode, signal);
   }
 }
 
 // ─── Syntax-only: tsc compile check ──────────────────────────────────────────
 
-async function runSyntaxCheck(hash: string, artifactDir: string): Promise<VerificationResult> {
+async function runSyntaxCheck(hash: string, artifactDir: string, signal?: AbortSignal): Promise<VerificationResult> {
   await emitEvent(hash, { type: 'llm_log', message: 'Syntax check: compiling TypeScript…' });
 
   return new Promise((resolve, reject) => {
@@ -58,6 +59,7 @@ async function runSyntaxCheck(hash: string, artifactDir: string): Promise<Verifi
         cwd: artifactDir,
         env: { ...process.env },
         timeout: 60_000,
+        signal,
       }
     );
 
@@ -78,26 +80,27 @@ async function runSyntaxCheck(hash: string, artifactDir: string): Promise<Verifi
 async function runCucumberSmoke(
   hash: string,
   artifactDir: string,
-  mode: 'smoke' | 'full'
+  mode: 'smoke' | 'full',
+  signal?: AbortSignal
 ): Promise<VerificationResult> {
   await emitEvent(hash, {
     type: 'llm_log',
     message: `Verification: running cucumber-js (${mode} mode)…`,
   });
 
-  const result = await spawnCucumber(hash, artifactDir);
+  const result = await spawnCucumber(hash, artifactDir, signal);
 
   if (!result.passed && mode === 'full') {
     // In full mode, retry once on flake before self-healing
     await emitEvent(hash, { type: 'llm_log', message: 'Flake detected, retrying once…' });
-    const retryResult = await spawnCucumber(hash, artifactDir);
+    const retryResult = await spawnCucumber(hash, artifactDir, signal);
     return { ...retryResult, mode };
   }
 
   return { ...result, mode };
 }
 
-async function spawnCucumber(hash: string, artifactDir: string): Promise<Pick<VerificationResult, 'passed' | 'errors'>> {
+async function spawnCucumber(hash: string, artifactDir: string, signal?: AbortSignal): Promise<Pick<VerificationResult, 'passed' | 'errors'>> {
   // Install deps first if needed
   const nodeModulesExist = await fs
     .access(path.join(artifactDir, 'node_modules'))
@@ -109,6 +112,7 @@ async function spawnCucumber(hash: string, artifactDir: string): Promise<Pick<Ve
       const install = spawn('bun', ['install', '--ignore-scripts'], {
         cwd: artifactDir,
         timeout: 120_000,
+        signal,
       });
       install.on('error', reject);
       install.on('close', (code) => (code === 0 ? resolve() : reject(new Error('bun install failed'))));
@@ -127,6 +131,7 @@ async function spawnCucumber(hash: string, artifactDir: string): Promise<Pick<Ve
           PLAYWRIGHT_BROWSERS_PATH: '0',
         },
         timeout: 300_000, // 5 min max per verification run
+        signal,
       }
     );
 
@@ -150,7 +155,8 @@ async function spawnCucumber(hash: string, artifactDir: string): Promise<Pick<Ve
 export async function attemptSelfHeal(
   state: JobState,
   stepFiles: Array<{ filename: string; content: string }>,
-  errors: string[]
+  errors: string[],
+  signal?: AbortSignal
 ): Promise<Array<{ filename: string; content: string }>> {
   const { hash } = state;
 
@@ -203,7 +209,7 @@ Return the repaired files as a JSON object: { "files": [{ "filename": string, "c
       },
     ],
     response_format: { type: 'json_object' },
-  });
+  }, { signal });
 
   const raw = response.choices[0]?.message?.content;
   if (!raw) throw new Error('Self-heal LLM returned empty content');
