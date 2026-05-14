@@ -20,6 +20,7 @@ services:
       REDIS_URL: redis://redis:6379
       MAX_CONCURRENT_JOBS: '2'
       STORAGE_DIR: /storage
+      CORS_ORIGINS: 'http://localhost:5173'
       JOB_TTL_DAYS: '7'
       PAGE_TIMEOUT_SEC: '30'
       LLM_CALL_TIMEOUT_SEC: '60'

@@ -40,6 +40,7 @@ const EXPLORE_MAX_TIME_MS = 15 * 60 * 1000; // 15 minutes limit for exploration
 
 function buildStagehandOptions(llm: LLMConfig): V3Options {
   const base: Partial<V3Options> = {
+    env: 'LOCAL',
     verbose: 0,
   };
 

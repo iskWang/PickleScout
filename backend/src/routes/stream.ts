@@ -37,12 +37,20 @@ export async function streamRoutes(fastify: FastifyInstance): Promise<void> {
       const rawId = lastEventIdHeader ? parseInt(String(lastEventIdHeader), 10) : NaN;
       const lastSeenId = Number.isNaN(rawId) ? undefined : rawId;
 
-      // SSE headers
+      // SSE headers — include CORS manually because reply.raw.writeHead()
+      // bypasses Fastify's onSend hooks where @fastify/cors normally injects headers
+      const requestOrigin = request.headers.origin;
+      const allowedOrigins = (process.env.CORS_ORIGINS ?? 'http://localhost:5173').split(',');
+      const corsOrigin = requestOrigin && allowedOrigins.includes(requestOrigin)
+        ? requestOrigin
+        : undefined;
+
       reply.raw.writeHead(200, {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',
         Connection: 'keep-alive',
         'X-Accel-Buffering': 'no',
+        ...(corsOrigin && { 'Access-Control-Allow-Origin': corsOrigin }),
       });
 
       const send = (event: StreamEvent): void => {
