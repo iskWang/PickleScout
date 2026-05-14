@@ -9,7 +9,6 @@
 
 import Redis from 'ioredis';
 import type { JobState, StreamEvent } from './types';
-import { safeLog } from './utils/safeLog';
 
 const TTL_SECONDS = (parseInt(process.env.JOB_TTL_DAYS ?? '7', 10)) * 86_400;
 const SSE_EVENT_BUFFER_MAX = 50;

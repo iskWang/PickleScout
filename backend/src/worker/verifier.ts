@@ -18,8 +18,6 @@ import type { JobState, VerificationMode } from '../types';
 import { updateJobStatus } from '../redis';
 import { emitEvent } from './sse';
 
-const STORAGE_DIR = process.env.STORAGE_DIR ?? '/storage';
-
 export interface VerificationResult {
   passed: boolean;
   errors: string[];

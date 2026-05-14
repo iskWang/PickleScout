@@ -60,7 +60,7 @@ export async function streamRoutes(fastify: FastifyInstance): Promise<void> {
         if (closed) return;
         closed = true;
         if (heartbeat) clearInterval(heartbeat);
-        subscriber.unsubscribe(channel).then(() => subscriber.quit());
+        subscriber.unsubscribe(channel).then(() => subscriber.quit()).catch(() => undefined);
         reply.raw.end();
       };
 

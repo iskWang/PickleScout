@@ -127,7 +127,7 @@ export async function jobRoutes(fastify: FastifyInstance): Promise<void> {
       return reply.status(404).send({ error: 'Job not found or expired' });
     }
     // Never expose credentials in the response
-    const { llm, auth, ...safeState } = state;
+    const { llm, auth: _auth, ...safeState } = state;
     return reply.send({
       ...safeState,
       llm: { provider: llm.provider, model: llm.model },

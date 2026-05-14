@@ -11,7 +11,7 @@
 import { Queue, Worker, type Job } from 'bullmq';
 import path from 'path';
 import fs from 'fs/promises';
-import { getRedisClient, getJobState, updateJobStatus, deleteJobState } from '../redis';
+import { getRedisClient, getJobState, updateJobStatus } from '../redis';
 import { runExplorer } from './explorer';
 import { runGenerator } from './generator';
 import { runVerifier, attemptSelfHeal } from './verifier';
@@ -94,7 +94,7 @@ async function processJob(hash: string, signal: AbortSignal): Promise<void> {
     const freshState = await getJobState(hash);
     if (!freshState) throw new Error('Job state lost after exploration');
 
-    const artifact = await runGenerator(freshState, actionLog);
+    const artifact = await runGenerator(freshState, actionLog, signal);
 
     // Prepare artifact directory for verification
     const artifactDir = path.join(STORAGE_DIR, 'generated', hash);

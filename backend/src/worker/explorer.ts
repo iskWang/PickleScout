@@ -190,10 +190,12 @@ export async function runExplorer(state: JobState, signal?: AbortSignal): Promis
 
       if (observations.length === 0) break;
 
-      // Filter out actions we've already taken on this specific page
-      const currentUrl = stagehand.context.activePage()?.url() ?? '';
+      // Filter out actions we've already taken on this specific page.
+      // Use pathname only — querystring may vary across SPA state changes for the same view.
+      const rawUrl = stagehand.context.activePage()?.url() ?? '';
+      const currentPath = (() => { try { return new URL(rawUrl).pathname; } catch { return rawUrl; } })();
       const unvisitedObservations = observations.filter(
-        (o) => !visitedActions.has(`${currentUrl}::${o.selector}::${o.description}`)
+        (o) => !visitedActions.has(`${currentPath}::${o.selector}::${o.description}`)
       );
 
       // If we've exhausted all relevant interactive elements here, stop looping
@@ -228,7 +230,7 @@ export async function runExplorer(state: JobState, signal?: AbortSignal): Promis
 
       // Execute the specific unvisited action
       try {
-        visitedActions.add(`${currentUrl}::${unvisitedAction.selector}::${unvisitedAction.description}`);
+        visitedActions.add(`${currentPath}::${unvisitedAction.selector}::${unvisitedAction.description}`);
         await withSignal(stagehand.act(unvisitedAction));
         await recordEntry({ type: 'click', selector: unvisitedAction.selector, text: unvisitedAction.description });
       } catch (err) {

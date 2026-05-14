@@ -58,7 +58,8 @@ const FeatureFilesSchema = z.object({
 async function pass1GenerateFeatures(
   state: JobState,
   actionLog: ActionLog,
-  client: OpenAI
+  client: OpenAI,
+  signal?: AbortSignal
 ): Promise<Array<{ filename: string; content: string }>> {
   const { options, llm } = state;
   const positiveCount = Math.round(options.maxScenarios * options.positiveRatio);
@@ -105,7 +106,7 @@ Generate ${options.maxScenarios} Cucumber .feature file scenarios.`;
       { role: 'user', content: userPrompt },
     ],
     response_format: { type: 'json_object' },
-  });
+  }, { signal });
 
   const usage = response.usage;
   if (usage) {
@@ -145,7 +146,8 @@ async function pass2GenerateSteps(
   state: JobState,
   actionLog: ActionLog,
   featureFiles: Array<{ filename: string; content: string }>,
-  client: OpenAI
+  client: OpenAI,
+  signal?: AbortSignal
 ): Promise<Array<{ filename: string; content: string }>> {
   const { llm } = state;
 
@@ -204,7 +206,7 @@ ${featuresText}`;
       { role: 'user', content: userPrompt },
     ],
     response_format: { type: 'json_object' },
-  });
+  }, { signal });
 
   const usage = response.usage;
   if (usage) {
@@ -238,7 +240,8 @@ export interface GeneratedArtifact {
 
 export async function runGenerator(
   state: JobState,
-  actionLog: ActionLog
+  actionLog: ActionLog,
+  signal?: AbortSignal
 ): Promise<GeneratedArtifact> {
   const { hash, llm } = state;
 
@@ -254,13 +257,13 @@ export async function runGenerator(
   // Pass 1: Generate feature files
   let featureFiles: Array<{ filename: string; content: string }>;
   try {
-    featureFiles = await pass1GenerateFeatures(state, actionLog, client);
+    featureFiles = await pass1GenerateFeatures(state, actionLog, client, signal);
   } catch (err) {
     if (!(err instanceof SyntaxError) && !(err instanceof ZodError)) throw err;
     // eslint-disable-next-line no-console
     console.warn(safeLog({ msg: 'Pass 1 parse error, retrying', hash, err: String(err) }));
     await emitEvent(hash, { type: 'llm_log', message: 'LLM output parse error, retrying Pass 1…' });
-    featureFiles = await pass1GenerateFeatures(state, actionLog, client);
+    featureFiles = await pass1GenerateFeatures(state, actionLog, client, signal);
   }
 
   // eslint-disable-next-line no-console
@@ -275,13 +278,13 @@ export async function runGenerator(
 
   let stepFiles: Array<{ filename: string; content: string }>;
   try {
-    stepFiles = await pass2GenerateSteps(state, actionLog, featureFiles, client);
+    stepFiles = await pass2GenerateSteps(state, actionLog, featureFiles, client, signal);
   } catch (err) {
     if (!(err instanceof SyntaxError) && !(err instanceof ZodError)) throw err;
     // eslint-disable-next-line no-console
     console.warn(safeLog({ msg: 'Pass 2 parse error, retrying', hash, err: String(err) }));
     await emitEvent(hash, { type: 'llm_log', message: 'LLM output parse error, retrying Pass 2…' });
-    stepFiles = await pass2GenerateSteps(state, actionLog, featureFiles, client);
+    stepFiles = await pass2GenerateSteps(state, actionLog, featureFiles, client, signal);
   }
 
   // eslint-disable-next-line no-console
