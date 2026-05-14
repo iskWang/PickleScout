@@ -309,6 +309,45 @@ export async function runGenerator(
   return { featureFiles, stepFiles };
 }
 
+// ─── Pass 2 retry (called by step resolution logic in index.ts) ───────────────
+
+export async function rerunPass2(
+  state: JobState,
+  actionLog: ActionLog,
+  featureFiles: Array<{ filename: string; content: string }>,
+  signal?: AbortSignal
+): Promise<Array<{ filename: string; content: string }>> {
+  const { hash } = state;
+  const client = buildOpenAIClient(state.llm);
+
+  await emitEvent(hash, { type: 'llm_log', message: 'Step resolution failed — regenerating Pass 2…' });
+
+  let stepFiles: Array<{ filename: string; content: string }>;
+  try {
+    stepFiles = await pass2GenerateSteps(state, actionLog, featureFiles, client, signal);
+  } catch (err) {
+    if (!(err instanceof SyntaxError) && !(err instanceof ZodError)) throw err;
+    // eslint-disable-next-line no-console
+    console.warn(safeLog({ msg: 'Pass 2 retry parse error, retrying once', hash, err: String(err) }));
+    await emitEvent(hash, { type: 'llm_log', message: 'LLM output parse error, retrying Pass 2…' });
+    stepFiles = await pass2GenerateSteps(state, actionLog, featureFiles, client, signal);
+  }
+
+  const genDir = path.join(STORAGE_DIR, 'generated', hash);
+  for (const s of stepFiles) {
+    await fs.writeFile(path.join(genDir, 'steps', path.basename(s.filename)), s.content, 'utf-8');
+  }
+
+  // eslint-disable-next-line no-console
+  console.log(safeLog({ msg: 'Pass 2 retry complete', hash, stepFileCount: stepFiles.length }));
+  await emitEvent(hash, {
+    type: 'llm_log',
+    message: `Pass 2 retry complete: ${stepFiles.length} step file(s) regenerated`,
+  });
+
+  return stepFiles;
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function estimateCost(model: string, promptTokens: number, completionTokens: number): number {

@@ -14,7 +14,7 @@
 import { spawn } from 'child_process';
 import path from 'path';
 import fs from 'fs/promises';
-import type { JobState, VerificationMode } from '../types';
+import type { JobState, StepResolutionResult, VerificationMode } from '../types';
 import { updateJobStatus } from '../redis';
 import { emitEvent } from './sse';
 
@@ -148,6 +148,136 @@ async function spawnCucumber(hash: string, artifactDir: string, signal?: AbortSi
       resolve({ passed, errors });
     });
   });
+}
+
+// ─── Step Resolution Validator (PRD §6.6) ────────────────────────────────────
+
+const STEP_KEYWORDS = ['Given', 'When', 'Then', 'And', 'But'] as const;
+
+const CUCUMBER_PARAM_MAP: Record<string, string> = {
+  string: '(?:"[^"]*"|\'[^\']*\')',
+  int: '-?\\d+',
+  float: '-?\\d+\\.?\\d*',
+  word: '\\S+',
+};
+
+function cucumberExpressionToRegex(expr: string): RegExp {
+  // Split on {param} boundaries; escape literal parts, expand param parts
+  const parts = expr.split(/(\{(?:string|int|float|word)\})/);
+  const regexStr = parts.map((part) => {
+    const m = part.match(/^\{(\w+)\}$/);
+    if (m) return CUCUMBER_PARAM_MAP[m[1]] ?? '.+';
+    return part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }).join('');
+  return new RegExp(`^${regexStr}$`);
+}
+
+function extractStepPatterns(content: string): RegExp[] {
+  const patterns: RegExp[] = [];
+  // Matches: Given(/regex/flags, ...) or Given('expr', ...) or Given("expr", ...)
+  const re = /(?:Given|When|Then|And|But)\(\s*(?:\/((?:[^/\\]|\\.)*)\/?([gimsuy]*)|'([^']+)'|"([^"]+)")\s*,/g;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(content)) !== null) {
+    try {
+      if (match[1] !== undefined) {
+        patterns.push(new RegExp(match[1], match[2] ?? ''));
+      } else {
+        const expr = match[3] ?? match[4] ?? '';
+        patterns.push(cucumberExpressionToRegex(expr));
+      }
+    } catch {
+      // Malformed pattern — skip
+    }
+  }
+  return patterns;
+}
+
+interface ParsedScenario {
+  name: string;
+  steps: string[];
+}
+
+function parseFeatureFile(content: string): { featureName: string; scenarios: ParsedScenario[] } {
+  const lines = content.split('\n');
+  let featureName = '';
+  const scenarios: ParsedScenario[] = [];
+  let current: ParsedScenario | null = null;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith('Feature:')) {
+      featureName = trimmed.slice('Feature:'.length).trim();
+    } else if (trimmed.startsWith('Scenario Outline:')) {
+      if (current) scenarios.push(current);
+      current = { name: trimmed.slice('Scenario Outline:'.length).trim(), steps: [] };
+    } else if (trimmed.startsWith('Scenario:')) {
+      if (current) scenarios.push(current);
+      current = { name: trimmed.slice('Scenario:'.length).trim(), steps: [] };
+    } else if (current) {
+      for (const kw of STEP_KEYWORDS) {
+        if (trimmed.startsWith(`${kw} `)) {
+          // Replace Scenario Outline <var> with a quoted string for matching
+          const stepText = trimmed.slice(kw.length + 1).trim().replace(/<[^>]+>/g, '"value"');
+          current.steps.push(stepText);
+          break;
+        }
+      }
+    }
+  }
+  if (current) scenarios.push(current);
+  return { featureName, scenarios };
+}
+
+export async function checkStepResolution(artifactDir: string): Promise<StepResolutionResult[]> {
+  const featuresDir = path.join(artifactDir, 'features');
+  const stepsDir = path.join(artifactDir, 'steps');
+
+  let featureFilenames: string[] = [];
+  let stepFilenames: string[] = [];
+  try {
+    [featureFilenames, stepFilenames] = await Promise.all([
+      fs.readdir(featuresDir).then((files) => files.filter((f) => f.endsWith('.feature'))),
+      fs.readdir(stepsDir).then((files) => files.filter((f) => f.endsWith('.ts'))),
+    ]);
+  } catch {
+    return []; // Directories not yet created — nothing to check
+  }
+
+  // Collect all step patterns across all step files
+  const allPatterns: RegExp[] = [];
+  for (const filename of stepFilenames) {
+    const content = await fs.readFile(path.join(stepsDir, filename), 'utf-8');
+    allPatterns.push(...extractStepPatterns(content));
+  }
+
+  const results: StepResolutionResult[] = [];
+
+  for (const filename of featureFilenames) {
+    const content = await fs.readFile(path.join(featuresDir, filename), 'utf-8');
+    const { featureName, scenarios } = parseFeatureFile(content);
+
+    for (const scenario of scenarios) {
+      const unresolvedSteps: string[] = [];
+      const ambiguousSteps: string[] = [];
+
+      for (const stepText of scenario.steps) {
+        const matchCount = allPatterns.filter((p) => p.test(stepText)).length;
+        if (matchCount === 0) unresolvedSteps.push(stepText);
+        else if (matchCount > 1) ambiguousSteps.push(stepText);
+      }
+
+      if (unresolvedSteps.length > 0 || ambiguousSteps.length > 0) {
+        results.push({
+          feature: featureName || filename,
+          scenario: scenario.name,
+          unresolvedSteps,
+          ambiguousSteps,
+        });
+      }
+    }
+  }
+
+  return results;
 }
 
 // ─── Self-heal attempt ────────────────────────────────────────────────────────

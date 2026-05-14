@@ -13,8 +13,8 @@ import path from 'path';
 import fs from 'fs/promises';
 import { getRedisClient, getJobState, updateJobStatus } from '../redis';
 import { runExplorer } from './explorer';
-import { runGenerator } from './generator';
-import { runVerifier, attemptSelfHeal } from './verifier';
+import { runGenerator, rerunPass2 } from './generator';
+import { runVerifier, attemptSelfHeal, checkStepResolution } from './verifier';
 import { runPackager } from './packager';
 import { emitEvent, resetJobCounter } from './sse';
 import { safeLog } from '../utils/safeLog';
@@ -99,9 +99,43 @@ async function processJob(hash: string, signal: AbortSignal): Promise<void> {
     // Prepare artifact directory for verification
     const artifactDir = path.join(STORAGE_DIR, 'generated', hash);
 
+    // Step resolution check (PRD §6.6): every feature step must resolve to exactly one definition
+    let currentStepFiles = artifact.stepFiles;
+    let stepResolutionIssues = await checkStepResolution(artifactDir);
+
+    if (stepResolutionIssues.length > 0) {
+      const issueCount = stepResolutionIssues.reduce(
+        (n, r) => n + r.unresolvedSteps.length + r.ambiguousSteps.length,
+        0,
+      );
+      await emitEvent(hash, {
+        type: 'llm_log',
+        message: `Step resolution: ${issueCount} unresolved/ambiguous step(s) detected — regenerating Pass 2…`,
+      });
+
+      currentStepFiles = await rerunPass2(freshState, actionLog, artifact.featureFiles, signal);
+      stepResolutionIssues = await checkStepResolution(artifactDir);
+
+      if (stepResolutionIssues.length > 0) {
+        const details = stepResolutionIssues
+          .flatMap((r) => [
+            ...r.unresolvedSteps.map((s) => `Unresolved in "${r.scenario}": ${s}`),
+            ...r.ambiguousSteps.map((s) => `Ambiguous in "${r.scenario}": ${s}`),
+          ])
+          .slice(0, 5)
+          .join('; ');
+        await failJob(hash, `Step resolution failed after Pass 2 retry: ${details}`);
+        return;
+      }
+
+      await emitEvent(hash, {
+        type: 'llm_log',
+        message: 'Step resolution: all steps resolved after regeneration',
+      });
+    }
+
     // Phase 3: Verification + self-healing loop
     let verificationResult = await runVerifier(freshState, artifactDir, signal);
-    let currentStepFiles = artifact.stepFiles;
     let unhealedScenarios = 0;
     let retries = 0;
     const maxRetries = freshState.options.maxRetries;
