@@ -50,12 +50,15 @@ const JobOptionsSchema = z.object({
   maxRetries: z.number().int().min(0).max(5).default(2),
 });
 
+// Zod v4: .default() requires the output type — pre-parse {} to get fully-typed defaults
+const DEFAULT_JOB_OPTIONS: JobOptions = JobOptionsSchema.parse({});
+
 const CreateJobSchema = z.object({
   url: z.string().min(1),
   hint: z.string().optional(),
   auth: AuthConfigSchema.optional(),
   llm: LLMConfigSchema,
-  options: JobOptionsSchema.optional().default({}),
+  options: JobOptionsSchema.optional().default(DEFAULT_JOB_OPTIONS),
 });
 
 // ─── Plugin ───────────────────────────────────────────────────────────────────
