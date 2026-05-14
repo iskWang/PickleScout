@@ -7,6 +7,11 @@ COPY package.json pnpm-lock.yaml* ./
 RUN pnpm install --frozen-lockfile
 
 COPY . .
+
+# VITE_API_URL must be a build-time ARG (Vite bakes env vars into the bundle)
+ARG VITE_API_URL=http://localhost:3000
+ENV VITE_API_URL=$VITE_API_URL
+
 RUN pnpm build
 
 # Serve with a lightweight HTTP server
