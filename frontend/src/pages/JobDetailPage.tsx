@@ -7,6 +7,7 @@ import ScreenshotGallery from '../components/ScreenshotGallery';
 import FeaturePreview from '../components/FeaturePreview';
 import UnverifiedDownloadModal from '../components/UnverifiedDownloadModal';
 import { saveRecentJob } from '../components/RecentJobs';
+import { API_BASE } from '../lib/api';
 import './JobDetailPage.css';
 
 export default function JobDetailPage() {
@@ -19,7 +20,7 @@ export default function JobDetailPage() {
   // Fetch initial job state (for URL display and initial status)
   useEffect(() => {
     if (!hash) return;
-    fetch(`/api/jobs/${hash}`)
+    fetch(`${API_BASE}/api/jobs/${hash}`)
       .then((r) => r.json())
       .then((data: { url?: string; status?: string }) => {
         if (data.url) setUrl(data.url);
@@ -42,16 +43,16 @@ export default function JobDetailPage() {
   const handleCancel = async () => {
     if (!hash) return;
     if (!confirm('Cancel this job?')) return;
-    await fetch(`/api/jobs/${hash}`, { method: 'DELETE' });
+    await fetch(`${API_BASE}/api/jobs/${hash}`, { method: 'DELETE' });
     navigate('/');
   };
 
   const handleDownload = () => {
-    window.location.href = `/api/jobs/${hash}/result`;
+    window.location.href = `${API_BASE}/api/jobs/${hash}/result`;
   };
 
   const handleUnverifiedDownload = () => {
-    window.location.href = `/api/jobs/${hash}/result?unverified=true`;
+    window.location.href = `${API_BASE}/api/jobs/${hash}/result?unverified=true`;
     setShowUnverifiedModal(false);
   };
 

@@ -5,6 +5,7 @@ import AuthPanel from '../components/AuthPanel';
 import OptionsPanel from '../components/OptionsPanel';
 import RecentJobs, { saveRecentJob } from '../components/RecentJobs';
 import type { AuthConfig, CreateJobRequest, JobOptions, LLMConfig } from '../types';
+import { API_BASE } from '../lib/api';
 import './JobFormPage.css';
 
 const DEFAULT_LLM: LLMConfig = {
@@ -59,7 +60,7 @@ export default function JobFormPage() {
     };
 
     try {
-      const res = await fetch('/api/jobs', {
+      const res = await fetch(`${API_BASE}/api/jobs`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),

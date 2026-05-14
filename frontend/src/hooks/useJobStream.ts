@@ -6,6 +6,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
+import { API_BASE } from '../lib/api';
 import type { JobStatus, JobSummary, StreamEvent, TokenUsage } from '../types';
 
 export interface StepEntry {
@@ -57,7 +58,7 @@ export function useJobStream(hash: string): JobStreamState {
     const connect = () => {
       if (!active) return;
 
-      const url = `/api/jobs/${hash}/stream`;
+      const url = `${API_BASE}/api/jobs/${hash}/stream`;
       const es = new EventSource(url);
       esRef.current = es;
 
