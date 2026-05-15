@@ -205,8 +205,13 @@ Legend: ✅ Done · ⚠️ Partial · ❌ Not started
 | P1: credential leak in validation log | ✅ | `jobs.ts:74` now wraps body in `safeLog()` before logging |
 | P2: Playwright version mismatch in Dockerfile | ✅ | Changed `playwright@1.52.0` → `1.60.0` to match lockfile |
 
-## pnpm Workspace / Monorepo (Planned — Milestone A)
+## pnpm Workspace / Monorepo (Milestone A — Done)
 
-Goal: unify frontend + backend dependency management to prevent version drift (e.g. zod, @fastify/* incompatibility).
-
-Deferred until after Phase 0 E2E validation.
+| Item | Status | Notes |
+|------|--------|-------|
+| Root `pnpm-workspace.yaml` + `package.json` | ✅ | Single lockfile at repo root |
+| `packages/shared` (`@picklescout/shared`) | ✅ | All shared types migrated; `dist/index.d.ts` generated |
+| `packages/frontend` / `packages/backend` | ✅ | Moved into `packages/`; full monorepo structure |
+| Type extraction — no duplicates | ✅ | `JobStatus`, `StreamEvent`, `LLMConfig`, etc. in shared only |
+| Docker builds updated | ✅ | Both Dockerfiles build from repo root; `packages/` paths throughout |
+| AGENTS.md / CLAUDE.md updated | ✅ | Commands use `pnpm -r *` and `pnpm dev:frontend/backend` |

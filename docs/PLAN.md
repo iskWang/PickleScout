@@ -92,7 +92,7 @@ These enable verification for every later task. Skip at your peril — verify st
 
 > Eliminates the frontend↔backend type drift that has caused several bugs (e.g. JobStatus, StreamEvent, JobOptions defined twice and going out of sync).
 
-### A1: Initialize workspace root
+### [x] A1: Initialize workspace root
 - **Goal**: `pnpm-workspace.yaml` + root `package.json` orchestrate both apps and the shared package.
 - **Files**:
   - Create `pnpm-workspace.yaml`:
@@ -131,7 +131,7 @@ These enable verification for every later task. Skip at your peril — verify st
   ```
 - **Done when**: single root lockfile; `pnpm -r typecheck` exits 0.
 
-### A2: Create `@picklescout/shared` package
+### [x] A2: Create `@picklescout/shared` package
 - **Goal**: one package owning all types used by BOTH frontend and backend.
 - **Files**:
   - Create `packages/shared/package.json`:
@@ -175,7 +175,7 @@ These enable verification for every later task. Skip at your peril — verify st
   ```
 - **Done when**: `pnpm --filter @picklescout/shared build` succeeds and produces `dist/index.d.ts`.
 
-### A3: Extract shared types
+### [x] A3: Extract shared types
 - **Goal**: types defined in BOTH `frontend/src/types.ts` AND `backend/src/types.ts` move to `@picklescout/shared`. Frontend and backend re-export or import from shared.
 - **Files**:
   - Identify duplicated types between `frontend/src/types.ts` and `backend/src/types.ts` (start with: `JobStatus`, `StreamEvent*`, `JobOptions`, `TokenUsage`, `JobSummary`, `AuthConfig`, `LLMProvider`, `LLMConfig`, `RecentJob`, `VerificationMode`, `CreateJobRequest`, `CreateJobResponse`).
@@ -192,7 +192,7 @@ These enable verification for every later task. Skip at your peril — verify st
   ```
 - **Done when**: every previously-duplicated type lives only in `packages/shared/src/types.ts`; `pnpm -r typecheck` exits 0.
 
-### A4: Update Docker builds for workspace
+### [x] A4: Update Docker builds for workspace
 - **Goal**: `docker compose up --build` still works. Each service builds with the workspace context so it sees `packages/shared`.
 - **Files**:
   - Modify `docker-compose.yml`: change `build.context` for both `frontend` and `backend` from `./frontend` / `./backend` to `.` (repo root); add `build.dockerfile: frontend/Dockerfile` (and same for backend).
@@ -211,7 +211,7 @@ These enable verification for every later task. Skip at your peril — verify st
   ```
 - **Done when**: both images build; smoke test passes.
 
-### A5: Workspace docs touch-up
+### [x] A5: Workspace docs touch-up
 - **Goal**: `CLAUDE.md` and AGENTS.md reflect the new layout so future agents don't re-trip the same mistakes.
 - **Files**:
   - Modify `CLAUDE.md`: in Commands, replace `cd frontend && pnpm dev` with `pnpm dev:frontend`; same for backend; add note "shared types live in `packages/shared` — modify there, never duplicate".

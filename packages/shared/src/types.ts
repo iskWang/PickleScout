@@ -1,7 +1,4 @@
-/**
- * Frontend shared types — manually kept in sync with backend/src/types.ts.
- * DO NOT import from backend — no shared package in this project.
- */
+// Types shared between frontend and backend.
 
 export type JobStatus =
   | 'queued'
@@ -64,7 +61,6 @@ export interface JobSummary {
   estimatedCostUSD: number;
 }
 
-// SSE Events
 export interface StreamEventBase {
   id: number;
   ts: number;
@@ -80,12 +76,3 @@ export type StreamEvent = StreamEventBase & (
   | { type: 'complete'; resultUrl: string; summary: JobSummary }
   | { type: 'error'; message: string; retryable: boolean }
 );
-
-// localStorage recent jobs
-export interface RecentJob {
-  hash: string;
-  url: string;
-  createdAt: number;
-  status: JobStatus;
-  scenarioCount?: number;
-}

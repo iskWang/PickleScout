@@ -1,8 +1,8 @@
 services:
   frontend:
     build:
-      context: ./frontend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: packages/frontend/Dockerfile
       args:
         VITE_API_URL: http://localhost:3000
     ports:
@@ -12,8 +12,8 @@ services:
 
   backend:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: packages/backend/Dockerfile
     ports:
       - '3000:3000'
     environment:

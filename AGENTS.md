@@ -10,15 +10,27 @@ Architecture overview: .agents/architecture.md
 - Queue: Redis 7 + bullmq 5
 - Output: Cucumber.js 11.0.0 + Playwright 1.50.0 (exact-pinned)
 
+## Monorepo layout
+
+```
+packages/
+  shared/    # @picklescout/shared — types used by both frontend and backend
+  frontend/  # @picklescout/frontend — React + Vite
+  backend/   # @picklescout/backend — Fastify + Stagehand + BullMQ
+```
+
+Shared types live in `packages/shared/src/types.ts` — modify there, never duplicate in frontend or backend.
+
 ## Commands
 ```bash
-docker compose up             # start all services
-cd frontend && pnpm dev       # Vite dev server
-cd backend && pnpm dev        # ts-node-dev watch
+docker compose up                        # start all services
+pnpm dev:frontend                        # Vite dev server (packages/frontend)
+pnpm dev:backend                         # ts-node-dev watch (packages/backend)
 
-pnpm lint                     # ESLint
-pnpm typecheck                # tsc --noEmit (run before committing)
-pnpm test                     # unit tests
+pnpm -r typecheck                        # typecheck all workspaces
+pnpm -r lint                             # lint all workspaces
+pnpm -r test                             # unit tests all workspaces
+pnpm --filter @picklescout/shared build  # build shared types (required before typecheck)
 ```
 
 ## Absolute Constraints
@@ -32,9 +44,9 @@ pnpm test                     # unit tests
 
 ## Definition of Done
 Before declaring a task complete, the Agent MUST:
-1. **Typecheck**: Run `pnpm typecheck` in the affected workspace(s) and resolve all errors.
-2. **Lint**: Run `pnpm lint` and ensure no styling or rule violations remain.
-3. **Tests**: Run `pnpm test` and ensure all tests pass (no regressions).
+1. **Typecheck**: Run `pnpm -r typecheck` and resolve all errors.
+2. **Lint**: Run `pnpm -r lint` and ensure no styling or rule violations remain.
+3. **Tests**: Run `pnpm -r test` and ensure all tests pass (no regressions).
 4. **PRD Sync**: Verify that any new fields or logic strictly follow `docs/PRD.md`.
 5. **Hygiene**: Ensure all temporary files or test artifacts are cleaned up.
 
