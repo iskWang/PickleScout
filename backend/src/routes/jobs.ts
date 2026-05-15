@@ -71,6 +71,7 @@ export async function jobRoutes(fastify: FastifyInstance): Promise<void> {
   fastify.post<{ Body: CreateJobRequest }>('/api/jobs', async (request, reply) => {
     const parseResult = CreateJobSchema.safeParse(request.body);
     if (!parseResult.success) {
+      fastify.log.warn(safeLog({ body: request.body, zodError: parseResult.error.flatten() }), 'Validation failed');
       return reply.status(400).send({
         error: 'Invalid request',
         details: parseResult.error.flatten(),

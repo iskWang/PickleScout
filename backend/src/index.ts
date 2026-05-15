@@ -7,6 +7,7 @@ import cors from '@fastify/cors';
 import { jobRoutes } from './routes/jobs';
 import { streamRoutes } from './routes/stream';
 import { resultRoutes } from './routes/result';
+import { screenshotRoutes } from './routes/screenshots';
 import { startWorker } from './worker';
 import { runStartupTasks } from './startup';
 
@@ -34,9 +35,11 @@ async function main(): Promise<void> {
   await fastify.register(jobRoutes);
   await fastify.register(streamRoutes);
   await fastify.register(resultRoutes);
+  await fastify.register(screenshotRoutes);
 
   // Health check
   fastify.get('/health', async () => ({ status: 'ok', ts: Date.now() }));
+
 
   // Run startup tasks before accepting traffic
   await runStartupTasks();

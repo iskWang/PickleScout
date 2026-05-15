@@ -128,7 +128,7 @@ export function useJobStream(hash: string): JobStreamState {
               };
 
             case 'error':
-              return { ...prev, error: event.message };
+              return { ...prev, error: event.message, status: 'failed' };
 
             default:
               return prev;

@@ -6,7 +6,7 @@ import ActionLogPanel from '../components/ActionLogPanel';
 import ScreenshotGallery from '../components/ScreenshotGallery';
 import FeaturePreview from '../components/FeaturePreview';
 import UnverifiedDownloadModal from '../components/UnverifiedDownloadModal';
-import { saveRecentJob } from '../components/RecentJobs';
+import { saveRecentJob, removeRecentJob } from '../components/RecentJobs';
 import { API_BASE } from '../lib/api';
 import './JobDetailPage.css';
 
@@ -44,6 +44,7 @@ export default function JobDetailPage() {
     if (!hash) return;
     if (!confirm('Cancel this job?')) return;
     await fetch(`${API_BASE}/api/jobs/${hash}`, { method: 'DELETE' });
+    removeRecentJob(hash);
     navigate('/');
   };
 
@@ -77,7 +78,7 @@ export default function JobDetailPage() {
   }
 
   const currentStep = stream.steps.length > 0 ? stream.steps[stream.steps.length - 1].stepNumber : 0;
-  const isActive = stream.status && ['exploring', 'generating', 'verifying', 'self_healing'].includes(stream.status);
+  const isActive = stream.status && ['queued', 'exploring', 'generating', 'verifying', 'self_healing'].includes(stream.status);
   const isCompleted = stream.status === 'completed';
   const isFailed = stream.status === 'failed';
 

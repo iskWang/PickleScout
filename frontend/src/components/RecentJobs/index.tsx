@@ -13,6 +13,11 @@ export function saveRecentJob(job: RecentJob): void {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
 }
 
+export function removeRecentJob(hash: string): void {
+  const updated = loadRecentJobs().filter((j) => j.hash !== hash);
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+}
+
 export function loadRecentJobs(): RecentJob[] {
   try {
     return JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '[]') as RecentJob[];

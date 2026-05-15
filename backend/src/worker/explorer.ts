@@ -223,7 +223,7 @@ export async function runExplorer(state: JobState, signal?: AbortSignal): Promis
             observeEntry.screenshotPath = relPath;
             await emitEvent(hash, {
               type: 'screenshot',
-              url: `/api/screenshots/${relPath}`,
+              url: `/api/screenshots/${hash}/${screenshotFilename}`,
             });
           }
         } catch { /* best-effort */ }
