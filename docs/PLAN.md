@@ -229,7 +229,7 @@ These enable verification for every later task. Skip at your peril — verify st
 
 > PRD §11 Phase 0 gate. Cannot proceed to Phase 2 work until Phase 0 demonstrates a usable LLM-driven generation result.
 
-### B1: Live smoke run against demo.odoo.com
+### [x] B1: Live smoke run against demo.odoo.com
 - **Goal**: one full pipeline pass produces a downloadable ZIP whose `package.json` is valid and `.feature` files parse.
 - **Files**:
   - Create `scripts/phase0-validate.sh` (chmod +x). Behavior:
@@ -246,7 +246,7 @@ These enable verification for every later task. Skip at your peril — verify st
   ```
 - **Done when**: live run produces a ZIP with valid Gherkin + step files.
 
-### B2: Generated artifact runs standalone
+### [x] B2: Generated artifact runs standalone
 - **Goal**: the ZIP from B1, extracted to a clean directory with no Stagehand or LLM env, runs `pnpm install && pnpm test --dry-run` successfully.
 - **Files**:
   - Extend `scripts/phase0-validate.sh` with a follow-up step:
@@ -260,7 +260,7 @@ These enable verification for every later task. Skip at your peril — verify st
   ```
 - **Done when**: dry-run in extracted artifact exits 0.
 
-### B3: Concurrency benchmark
+### [!] B3: Concurrency benchmark
 - **Goal**: documented `MAX_CONCURRENT_JOBS` value for Mac Mini 16 GB.
 - **Files**:
   - Create `docs/BENCHMARKS.md` with: tested concurrency levels (1, 2, 3), peak RAM observed, recommendation.

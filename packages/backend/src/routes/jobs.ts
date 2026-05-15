@@ -93,7 +93,7 @@ export async function jobRoutes(fastify: FastifyInstance): Promise<void> {
     const hash = nanoid(21);
     const now = Date.now();
 
-    const options: JobOptions = body.options as JobOptions;
+    const options = body.options;
 
     const state: JobState = {
       hash,

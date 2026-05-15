@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { useJobStream } from '../hooks/useJobStream';
+import { useJobStream, TERMINAL_STATUSES } from '../hooks/useJobStream';
 import JobStatusBar from '../components/JobStatusBar';
 import ActionLogPanel from '../components/ActionLogPanel';
 import ScreenshotGallery from '../components/ScreenshotGallery';
@@ -78,7 +78,7 @@ export default function JobDetailPage() {
   }
 
   const currentStep = stream.steps.length > 0 ? stream.steps[stream.steps.length - 1].stepNumber : 0;
-  const isActive = stream.status && ['queued', 'exploring', 'generating', 'verifying', 'self_healing'].includes(stream.status);
+  const isActive = stream.status !== null && !TERMINAL_STATUSES.has(stream.status);
   const isCompleted = stream.status === 'completed';
   const isFailed = stream.status === 'failed';
 

@@ -30,7 +30,7 @@ export interface JobStreamState {
   connected: boolean;
 }
 
-const TERMINAL_STATUSES = new Set<JobStatus>(['completed', 'failed']);
+export const TERMINAL_STATUSES = new Set<JobStatus>(['completed', 'failed']);
 
 export function useJobStream(hash: string): JobStreamState {
   const [state, setState] = useState<JobStreamState>({
