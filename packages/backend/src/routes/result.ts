@@ -29,8 +29,15 @@ export async function resultRoutes(fastify: FastifyInstance): Promise<void> {
       return reply.status(409).send({ error: 'Job is not yet complete' });
     }
 
-    const filename = unverified ? 'result_unverified.zip' : 'result.zip';
-    const zipPath = path.join(STORAGE_DIR, 'outputs', hash, filename);
+    const preferred = unverified ? 'result_unverified.zip' : 'result.zip';
+    const fallback = unverified ? 'result.zip' : 'result_unverified.zip';
+
+    let zipPath = path.join(STORAGE_DIR, 'outputs', hash, preferred);
+    let isUnverified = unverified;
+    if (!fs.existsSync(zipPath)) {
+      zipPath = path.join(STORAGE_DIR, 'outputs', hash, fallback);
+      isUnverified = !unverified;
+    }
 
     if (!fs.existsSync(zipPath)) {
       return reply.status(404).send({ error: 'Result file not found' });
@@ -38,10 +45,12 @@ export async function resultRoutes(fastify: FastifyInstance): Promise<void> {
 
     const stat = fs.statSync(zipPath);
     const fileSize = stat.size;
+    const suffix = isUnverified ? '_unverified' : '';
+    const downloadName = `picklescout-${hash.slice(0, 8)}${suffix}.zip`;
 
     reply.raw.writeHead(200, {
       'Content-Type': 'application/zip',
-      'Content-Disposition': `attachment; filename="picklescout-${hash.slice(0, 8)}.zip"`,
+      'Content-Disposition': `attachment; filename="${downloadName}"`,
       'Content-Length': fileSize,
     });
 
