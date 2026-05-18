@@ -21,9 +21,9 @@ const STORAGE_DIR = process.env.STORAGE_DIR ?? '/storage';
 
 // ─── OpenAI Client Factory ─────────────────────────────────────────────────────
 
-function buildOpenAIClient(llm: LLMConfig): OpenAI {
-  if (llm.provider === 'anthropic' || llm.provider === 'gemini') {
-    throw new Error(`Provider '${llm.provider}' is not supported by the generator; use openai, openrouter, or custom`);
+export function buildOpenAIClient(llm: LLMConfig): OpenAI {
+  if (llm.provider === 'anthropic') {
+    throw new Error(`Provider 'anthropic' is not supported by the generator; use openai, openrouter, gemini, or custom`);
   }
 
   const options: ConstructorParameters<typeof OpenAI>[0] = {
@@ -37,11 +37,24 @@ function buildOpenAIClient(llm: LLMConfig): OpenAI {
       'HTTP-Referer': 'https://picklescout.app',
       'X-Title': 'PickleScout',
     };
+  } else if (llm.provider === 'gemini') {
+    // Google's OpenAI-compatible endpoint
+    options.baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai/';
   } else if (llm.provider === 'custom' && llm.baseURL) {
     options.baseURL = llm.baseURL;
   }
 
   return new OpenAI(options);
+}
+
+function patternFromKey(key: string): string {
+  return key.slice(key.indexOf(':') + 1);
+}
+
+// Strip markdown code fences that some models wrap JSON in
+function stripMarkdownJson(raw: string): string {
+  const match = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
+  return match ? match[1].trim() : raw.trim();
 }
 
 // ─── Pass 1: ActionLog → Feature Files ────────────────────────────────────────
@@ -69,9 +82,10 @@ async function pass1GenerateFeatures(
 Generate Cucumber .feature files based on the provided browser ActionLog.
 
 STEP TEXT RULES:
-- Feature step text must be precise (case, whitespace, punctuation matter)
-- Use {string} for quoted string parameters, {int} for integer parameters
-- Write clear, business-readable Gherkin in English
+- Feature step text must use ACTUAL QUOTED VALUES, e.g. When I click the "New" button — NEVER write {string}, {int}, or any placeholder in .feature files
+- {string} and {int} are ONLY for step definitions (*.steps.ts); they must never appear in Gherkin scenario steps
+- Use realistic values derived from the ActionLog (button labels, field names, status texts observed in the browser)
+- Step text must be precise (case, whitespace, punctuation matter)
 
 SCENARIO LIMIT:
 - Generate at most ${options.maxScenarios} scenarios total
@@ -99,35 +113,10 @@ ${actionLog.entries
 
 Generate ${options.maxScenarios} Cucumber .feature file scenarios.`;
 
-  const response = await client.chat.completions.create({
-    model: llm.model,
-    messages: [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: userPrompt },
-    ],
-    response_format: { type: 'json_object' },
-  }, { signal });
-
-  const usage = response.usage;
-  if (usage) {
-    const delta: TokenUsage = {
-      promptTokens: usage.prompt_tokens,
-      completionTokens: usage.completion_tokens,
-      estimatedCostUSD: estimateCost(llm.model, usage.prompt_tokens, usage.completion_tokens),
-    };
-    const prior = await getCumulativeTokens(state);
-    const cumulative: TokenUsage = {
-      promptTokens: prior.promptTokens + delta.promptTokens,
-      completionTokens: prior.completionTokens + delta.completionTokens,
-      estimatedCostUSD: prior.estimatedCostUSD + delta.estimatedCostUSD,
-    };
-    await updateJobStatus(state.hash, { tokenUsage: cumulative });
-    await emitEvent(state.hash, { type: 'token_usage', delta, cumulative });
-  }
-
-  const raw = response.choices[0]?.message?.content;
+  const { content: raw, usage } = await llmCall(client, llm.model, systemPrompt, userPrompt, signal);
   if (!raw) throw new Error('LLM returned empty content for Pass 1');
-  const parsed = FeatureFilesSchema.parse(JSON.parse(raw));
+  await accumulateTokens(state, usage);
+  const parsed = FeatureFilesSchema.parse(JSON.parse(stripMarkdownJson(raw)));
   return parsed.files;
 }
 
@@ -142,19 +131,11 @@ const StepFilesSchema = z.object({
   ),
 });
 
-async function pass2GenerateSteps(
-  state: JobState,
-  actionLog: ActionLog,
-  featureFiles: Array<{ filename: string; content: string }>,
-  client: OpenAI,
-  signal?: AbortSignal
-): Promise<Array<{ filename: string; content: string }>> {
-  const { llm } = state;
+const CommonStepSchema = z.object({
+  files: z.array(z.object({ filename: z.string(), content: z.string() })).length(1),
+});
 
-  const systemPrompt = `You are a Playwright + Cucumber.js step definition writer.
-Generate TypeScript .steps.ts files matching the provided .feature files exactly.
-
-SELECTOR PRIORITY (annotate with a comment):
+const STEP_SHARED_RULES = `SELECTOR PRIORITY (annotate with a comment):
   1. [data-testid="..."]
   2. [aria-label="..."]
   3. [role="..."]
@@ -168,7 +149,6 @@ FILE ORDERING within each file:
 STEP TEXT RULES:
 - Step definitions MUST match feature step text exactly (case, whitespace, punctuation)
 - Use {string} for string params, {int} for integer params
-- Do NOT redeclare steps already in common.steps.ts (Given I am logged in, When I fill {string} with {string}, Then the page title should contain {string})
 
 ASSERTION RULES:
 - Every Then step must contain at least one expect() call
@@ -178,57 +158,251 @@ ASSERTION RULES:
 IMPORTS:
 - import { Given, When, Then } from '@cucumber/cucumber';
 - import { expect } from '@playwright/test';
-- import type { CustomWorld } from '../support/world';
+- import type { CustomWorld } from '../support/world';`;
 
-Return a JSON object with a "files" array, each item having "filename" and "content" fields.
-Also include a "common.steps.ts" file for any shared steps.`;
-
-  const featuresText = featureFiles
-    .map((f) => `=== ${f.filename} ===\n${f.content}`)
-    .join('\n\n');
-
-  const userPrompt = `Generate TypeScript step definitions for these feature files.
-The step text is FROZEN — match it exactly.
-
-Target URL: ${actionLog.targetUrl}
-Actions recorded:
-${actionLog.entries
-  .map((e) => `[${e.type}] selector: ${e.selector ?? 'N/A'} value: ${e.value ?? 'N/A'}`)
-  .join('\n')}
-
-Feature files to implement:
-${featuresText}`;
-
+async function llmCall(
+  client: OpenAI,
+  model: string,
+  system: string,
+  user: string,
+  signal?: AbortSignal
+): Promise<{ content: string; usage: OpenAI.CompletionUsage | undefined }> {
   const response = await client.chat.completions.create({
-    model: llm.model,
+    model,
     messages: [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: userPrompt },
+      { role: 'system', content: system },
+      { role: 'user', content: user },
     ],
     response_format: { type: 'json_object' },
   }, { signal });
+  return { content: response.choices[0]?.message?.content ?? '', usage: response.usage };
+}
 
-  const usage = response.usage;
-  if (usage) {
-    const delta: TokenUsage = {
-      promptTokens: usage.prompt_tokens,
-      completionTokens: usage.completion_tokens,
-      estimatedCostUSD: estimateCost(llm.model, usage.prompt_tokens, usage.completion_tokens),
-    };
-    const prior = await getCumulativeTokens(state);
-    const cumulative: TokenUsage = {
+async function accumulateTokens(
+  state: JobState,
+  usage: OpenAI.CompletionUsage | undefined
+): Promise<void> {
+  if (!usage) return;
+  const delta: TokenUsage = {
+    promptTokens: usage.prompt_tokens,
+    completionTokens: usage.completion_tokens,
+    estimatedCostUSD: estimateCost(state.llm.model, usage.prompt_tokens, usage.completion_tokens),
+  };
+  const prior = await getCumulativeTokens(state);
+  await updateJobStatus(state.hash, {
+    tokenUsage: {
       promptTokens: prior.promptTokens + delta.promptTokens,
       completionTokens: prior.completionTokens + delta.completionTokens,
       estimatedCostUSD: prior.estimatedCostUSD + delta.estimatedCostUSD,
-    };
-    await updateJobStatus(state.hash, { tokenUsage: cumulative });
-    await emitEvent(state.hash, { type: 'token_usage', delta, cumulative });
+    },
+  });
+  await emitEvent(state.hash, { type: 'token_usage', delta, cumulative: {
+    promptTokens: prior.promptTokens + delta.promptTokens,
+    completionTokens: prior.completionTokens + delta.completionTokens,
+    estimatedCostUSD: prior.estimatedCostUSD + delta.estimatedCostUSD,
+  }});
+}
+
+// Pass 2a: generate common.steps.ts with all shared/navigation steps
+async function pass2aGenerateCommon(
+  state: JobState,
+  actionLog: ActionLog,
+  featuresText: string,
+  client: OpenAI,
+  signal?: AbortSignal
+): Promise<{ filename: string; content: string }> {
+
+  const system = `You are a Playwright + Cucumber.js step definition writer.
+${STEP_SHARED_RULES}
+
+Your task: generate ONLY "common.steps.ts" containing every step that appears in more than one feature file, OR that is a navigation/setup step (login, navigation menus, page loads).
+Do NOT include scenario-specific assertion steps in common.steps.ts.
+Return a JSON object: { "files": [{ "filename": "common.steps.ts", "content": "..." }] }`;
+
+  const user = `Target URL: ${actionLog.targetUrl}
+Actions recorded:
+${actionLog.entries.map((e) => `[${e.type}] selector: ${e.selector ?? 'N/A'} value: ${e.value ?? 'N/A'}`).join('\n')}
+
+Feature files:
+${featuresText}`;
+
+  const { content, usage } = await llmCall(client, state.llm.model, system, user, signal);
+  if (!content) throw new Error('LLM returned empty content for Pass 2a');
+  await accumulateTokens(state, usage);
+
+  const parsed = CommonStepSchema.parse(JSON.parse(stripMarkdownJson(content)));
+  return parsed.files[0];
+}
+
+export function extractStepPatterns(content: string): Set<string> {
+  const patterns = new Set<string>();
+  // String/template literal patterns: Given('text', ...) / "text" / `text`
+  const reStr = /\b(Given|When|Then)\s*\(\s*(['"`])((?:\\.|(?!\2).)*)\2/g;
+  let m: RegExpExecArray | null;
+  while ((m = reStr.exec(content)) !== null) {
+    patterns.add(`${m[1]}:${m[3]}`);
+  }
+  // Regex patterns: Given(/^pattern$/, ...)
+  const reRe = /\b(Given|When|Then)\s*\(\s*\/((?:\\.|[^/])+)\/[gimsu]*/g;
+  while ((m = reRe.exec(content)) !== null) {
+    patterns.add(`${m[1]}:/${m[2]}/`);
+  }
+  return patterns;
+}
+
+export function dedupeStepFile(content: string, commonKeys: Set<string>): string {
+  if (commonKeys.size === 0) return content;
+  const parts = content.split(/(?=^\s*(?:Given|When|Then)\s*\()/m);
+  const kept = parts.filter((part, idx) => {
+    if (idx === 0) return true;
+    const mStr = part.match(/^\s*(Given|When|Then)\s*\(\s*(['"`])((?:\\.|(?!\2).)*)\2/);
+    if (mStr) return !commonKeys.has(`${mStr[1]}:${mStr[3]}`);
+    const mRe = part.match(/^\s*(Given|When|Then)\s*\(\s*\/((?:\\.|[^/])+)\/[gimsu]*/);
+    if (mRe) return !commonKeys.has(`${mRe[1]}:/${mRe[2]}/`);
+    return true;
+  });
+  return kept.join('');
+}
+
+export function extractRequiredStepCoverage(
+  featureFiles: Array<{ filename: string; content: string }>
+): Array<{ keyword: string; pattern: string }> {
+  const seen = new Set<string>();
+  const required: Array<{ keyword: string; pattern: string }> = [];
+  let lastKeyword = 'When';
+
+  for (const file of featureFiles) {
+    for (const rawLine of file.content.split('\n')) {
+      const line = rawLine.trim();
+      if (/^(?:Feature|Scenario(?: Outline)?|Background|Examples):/.test(line)) {
+        lastKeyword = 'When';
+        continue;
+      }
+      const m = line.match(/^(Given|When|Then|And|But)\s+(.+)$/);
+      if (!m) continue;
+
+      let keyword = m[1];
+      if (keyword === 'And' || keyword === 'But') keyword = lastKeyword;
+      else lastKeyword = keyword;
+
+      const pattern = m[2].trim().replace(/"[^"]*"/g, '{string}');
+      if (!seen.has(pattern)) {
+        seen.add(pattern);
+        required.push({ keyword, pattern });
+      }
+    }
   }
 
-  const raw = response.choices[0]?.message?.content;
-  if (!raw) throw new Error('LLM returned empty content for Pass 2');
-  const parsed = StepFilesSchema.parse(JSON.parse(raw));
-  return parsed.files;
+  return required;
+}
+
+function injectMissingStubs(
+  files: Array<{ filename: string; content: string }>,
+  required: Array<{ keyword: string; pattern: string }>,
+  commonKeys: Set<string>,
+): Array<{ filename: string; content: string }> {
+  if (files.length === 0) return files;
+
+  // Collect all pattern strings defined across generated files
+  const allDefined = new Set<string>();
+  for (const k of commonKeys) allDefined.add(patternFromKey(k));
+  for (const f of files) {
+    for (const k of extractStepPatterns(f.content)) allDefined.add(patternFromKey(k));
+  }
+
+  const missing = required.filter(({ pattern }) => !allDefined.has(pattern));
+  if (missing.length === 0) return files;
+
+  const stubLines: string[] = [''];
+  for (const { keyword, pattern } of missing) {
+    const paramCount = (pattern.match(/\{string\}/g) ?? []).length;
+    const paramDecl = Array.from({ length: paramCount }, (_, i) => `_arg${i}: string`).join(', ');
+    const fnArgs = paramDecl ? `, ${paramDecl}` : '';
+    stubLines.push(`${keyword}('${pattern}', async function (this: CustomWorld${fnArgs}) {`);
+    stubLines.push(`  return 'pending';`);
+    stubLines.push(`});`);
+  }
+
+  const last = files[files.length - 1];
+  return [
+    ...files.slice(0, -1),
+    { filename: last.filename, content: last.content + stubLines.join('\n') + '\n' },
+  ];
+}
+
+// Pass 2b: generate feature-specific step files, given pattern signatures from common.steps.ts.
+// Uses signatures (not full content) to keep the prompt small and reduce the chance the
+// LLM ignores the "do not redeclare" rule on weaker models.
+async function pass2bGenerateFeatureSteps(
+  state: JobState,
+  actionLog: ActionLog,
+  featureFiles: Array<{ filename: string; content: string }>,
+  featuresText: string,
+  commonSteps: { filename: string; content: string },
+  client: OpenAI,
+  signal?: AbortSignal
+): Promise<Array<{ filename: string; content: string }>> {
+  const commonKeys = extractStepPatterns(commonSteps.content);
+
+  const requiredPatterns = extractRequiredStepCoverage(featureFiles);
+  const commonPatterns = new Set([...commonKeys].map(patternFromKey));
+
+  const requiredLines = requiredPatterns
+    .filter(({ pattern }) => !commonPatterns.has(pattern))
+    .map(({ keyword, pattern }) => `- ${keyword}('${pattern}')`)
+    .join('\n');
+
+  const signatureLines = [...commonKeys]
+    .map((k) => `- ${k.slice(0, k.indexOf(':'))}('${patternFromKey(k)}')`)
+    .join('\n');
+
+  const system = `You are a Playwright + Cucumber.js step definition writer.
+${STEP_SHARED_RULES}
+
+These step signatures are already defined in common.steps.ts.
+You MUST NOT redeclare any of them in feature-specific files.
+Cucumber loads common.steps.ts automatically — duplicates cause an Ambiguous error.
+
+=== Reserved signatures (DO NOT redeclare) ===
+${signatureLines || '(none)'}
+
+=== Required patterns — YOU MUST implement ALL of these EXACTLY as written ===
+Pattern strings must match character-for-character (word order, "button" vs "link", etc.).
+${requiredLines || '(all covered by common.steps.ts)'}
+
+Return a JSON object: { "files": [{ "filename": "XX_name.steps.ts", "content": "..." }, ...] }
+Do NOT include common.steps.ts in the output — only feature-specific files.`;
+
+  const user = `Target URL: ${actionLog.targetUrl}
+Actions recorded:
+${actionLog.entries.map((e) => `[${e.type}] selector: ${e.selector ?? 'N/A'} value: ${e.value ?? 'N/A'}`).join('\n')}
+
+Feature files to implement (one .steps.ts per .feature file):
+${featuresText}`;
+
+  const { content, usage } = await llmCall(client, state.llm.model, system, user, signal);
+  if (!content) throw new Error('LLM returned empty content for Pass 2b');
+  await accumulateTokens(state, usage);
+
+  const parsed = StepFilesSchema.parse(JSON.parse(stripMarkdownJson(content)));
+  const deduped = parsed.files
+    .filter((f) => path.basename(f.filename) !== 'common.steps.ts')
+    .map((f) => ({ filename: f.filename, content: dedupeStepFile(f.content, commonKeys) }));
+  return injectMissingStubs(deduped, requiredPatterns, commonKeys);
+}
+
+// Pass 2 (public): two-sub-pass + programmatic dedup to prevent duplicate step definitions
+async function pass2GenerateSteps(
+  state: JobState,
+  actionLog: ActionLog,
+  featureFiles: Array<{ filename: string; content: string }>,
+  client: OpenAI,
+  signal?: AbortSignal
+): Promise<Array<{ filename: string; content: string }>> {
+  const featuresText = featureFiles.map((f) => `=== ${f.filename} ===\n${f.content}`).join('\n\n');
+  const commonSteps = await pass2aGenerateCommon(state, actionLog, featuresText, client, signal);
+  const featureSteps = await pass2bGenerateFeatureSteps(state, actionLog, featureFiles, featuresText, commonSteps, client, signal);
+  return [commonSteps, ...featureSteps];
 }
 
 // ─── Main Generator ───────────────────────────────────────────────────────────
@@ -351,7 +525,6 @@ export async function rerunPass2(
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function estimateCost(model: string, promptTokens: number, completionTokens: number): number {
-  // Rough pricing estimates (USD per 1M tokens) — not a real bill
   const pricing: Record<string, { input: number; output: number }> = {
     'gpt-4o': { input: 5, output: 15 },
     'gpt-4o-mini': { input: 0.15, output: 0.6 },
