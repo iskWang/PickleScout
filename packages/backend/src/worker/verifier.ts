@@ -17,6 +17,7 @@ import fs from 'fs/promises';
 import type { JobState, StepResolutionResult, VerificationMode } from '../types';
 import { updateJobStatus } from '../redis';
 import { emitEvent } from './sse';
+import { buildOpenAIClient } from './generator';
 
 export interface VerificationResult {
   passed: boolean;
@@ -46,18 +47,46 @@ export async function runVerifier(
   }
 }
 
+// ─── Shared: ensure node_modules exist in artifactDir ────────────────────────
+
+async function ensureInstalled(artifactDir: string, signal?: AbortSignal): Promise<void> {
+  const exists = await fs
+    .access(path.join(artifactDir, 'node_modules'))
+    .then(() => true)
+    .catch(() => false);
+  if (exists) return;
+
+  await new Promise<void>((resolve, reject) => {
+    const install = spawn('pnpm', ['install', '--ignore-scripts'], {
+      cwd: artifactDir,
+      timeout: 120_000,
+      signal,
+    });
+    const out: string[] = [];
+    install.stdout?.on('data', (chunk: Buffer) => out.push(chunk.toString()));
+    install.stderr?.on('data', (chunk: Buffer) => out.push(chunk.toString()));
+    install.on('error', reject);
+    install.on('close', (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`pnpm install failed (exit ${code}): ${out.slice(-5).join('')}`));
+    });
+  });
+}
+
 // ─── Syntax-only: tsc compile check ──────────────────────────────────────────
 
 async function runSyntaxCheck(hash: string, artifactDir: string, signal?: AbortSignal): Promise<VerificationResult> {
+  await emitEvent(hash, { type: 'llm_log', message: 'Syntax check: installing deps…' });
+  await ensureInstalled(artifactDir, signal);
   await emitEvent(hash, { type: 'llm_log', message: 'Syntax check: compiling TypeScript…' });
 
   return new Promise((resolve, reject) => {
     const proc = spawn(
-      'bunx',
-      ['tsc', '--noEmit', '--strict', '--target', 'ES2022', '--module', 'commonjs'],
+      'pnpm',
+      ['exec', 'tsc', '--noEmit', '--strict', '--target', 'ES2022', '--module', 'commonjs'],
       {
         cwd: artifactDir,
-        env: { ...process.env },
+        env: process.env,
         timeout: 60_000,
         signal,
       }
@@ -88,6 +117,7 @@ async function runCucumberSmoke(
     message: `Verification: running cucumber-js (${mode} mode)…`,
   });
 
+  await ensureInstalled(artifactDir, signal);
   const result = await spawnCucumber(hash, artifactDir, signal);
 
   if (!result.passed && mode === 'full') {
@@ -101,35 +131,14 @@ async function runCucumberSmoke(
 }
 
 async function spawnCucumber(hash: string, artifactDir: string, signal?: AbortSignal): Promise<Pick<VerificationResult, 'passed' | 'errors'>> {
-  // Install deps first if needed
-  const nodeModulesExist = await fs
-    .access(path.join(artifactDir, 'node_modules'))
-    .then(() => true)
-    .catch(() => false);
-
-  if (!nodeModulesExist) {
-    await new Promise<void>((resolve, reject) => {
-      const install = spawn('bun', ['install', '--ignore-scripts'], {
-        cwd: artifactDir,
-        timeout: 120_000,
-        signal,
-      });
-      install.on('error', reject);
-      install.on('close', (code) => (code === 0 ? resolve() : reject(new Error('bun install failed'))));
-    });
-  }
-
   return new Promise((resolve, reject) => {
     const resultPath = `/tmp/cucumber-result-${hash}.json`;
     const proc = spawn(
-      'bunx',
-      ['cucumber-js', '--format', `json:${resultPath}`],
+      'pnpm',
+      ['exec', 'cucumber-js', '--format', `json:${resultPath}`],
       {
         cwd: artifactDir,
-        env: {
-          ...process.env,
-          PLAYWRIGHT_BROWSERS_PATH: '0',
-        },
+        env: process.env,
         timeout: 300_000, // 5 min max per verification run
         signal,
       }
@@ -143,7 +152,6 @@ async function spawnCucumber(hash: string, artifactDir: string, signal?: AbortSi
     proc.on('close', (code) => {
       const passed = code === 0;
       const errors = passed ? [] : output.filter((l) => l.includes('Error') || l.includes('failed'));
-      // Clean up per-job result file (best-effort)
       fs.unlink(resultPath).catch(() => undefined);
       resolve({ passed, errors });
     });
@@ -162,7 +170,6 @@ const CUCUMBER_PARAM_MAP: Record<string, string> = {
 };
 
 function cucumberExpressionToRegex(expr: string): RegExp {
-  // Split on {param} boundaries; escape literal parts, expand param parts
   const parts = expr.split(/(\{(?:string|int|float|word)\})/);
   const regexStr = parts.map((part) => {
     const m = part.match(/^\{(\w+)\}$/);
@@ -172,7 +179,7 @@ function cucumberExpressionToRegex(expr: string): RegExp {
   return new RegExp(`^${regexStr}$`);
 }
 
-function extractStepPatterns(content: string): RegExp[] {
+function buildStepRegexes(content: string): RegExp[] {
   const patterns: RegExp[] = [];
   // Matches: Given(/regex/flags, ...) or Given('expr', ...) or Given("expr", ...)
   const re = /(?:Given|When|Then|And|But)\(\s*(?:\/((?:[^/\\]|\\.)*)\/?([gimsuy]*)|'([^']+)'|"([^"]+)")\s*,/g;
@@ -216,8 +223,13 @@ function parseFeatureFile(content: string): { featureName: string; scenarios: Pa
     } else if (current) {
       for (const kw of STEP_KEYWORDS) {
         if (trimmed.startsWith(`${kw} `)) {
-          // Replace Scenario Outline <var> with a quoted string for matching
-          const stepText = trimmed.slice(kw.length + 1).trim().replace(/<[^>]+>/g, '"value"');
+          // Replace Scenario Outline <var> and accidental {param} placeholders with quoted values for matching
+          const stepText = trimmed.slice(kw.length + 1).trim()
+            .replace(/<[^>]+>/g, '"value"')
+            .replace(/\{string\}/g, '"value"')
+            .replace(/\{int\}/g, '0')
+            .replace(/\{float\}/g, '0.0')
+            .replace(/\{word\}/g, 'word');
           current.steps.push(stepText);
           break;
         }
@@ -243,11 +255,10 @@ export async function checkStepResolution(artifactDir: string): Promise<StepReso
     return []; // Directories not yet created — nothing to check
   }
 
-  // Collect all step patterns across all step files
   const allPatterns: RegExp[] = [];
   for (const filename of stepFilenames) {
     const content = await fs.readFile(path.join(stepsDir, filename), 'utf-8');
-    allPatterns.push(...extractStepPatterns(content));
+    allPatterns.push(...buildStepRegexes(content));
   }
 
   const results: StepResolutionResult[] = [];
@@ -296,21 +307,7 @@ export async function attemptSelfHeal(
     message: `Self-healing: attempting selector/timeout fixes (errors: ${errors.slice(0, 2).join('; ')})`,
   });
 
-  // Build OpenAI client for self-healing LLM call
-  const { default: OpenAI } = await import('openai');
-  const llm = state.llm;
-
-  if (llm.provider === 'anthropic' || llm.provider === 'gemini') {
-    throw new Error(`Provider '${llm.provider}' is not supported for self-healing; use openai, openrouter, or custom`);
-  }
-
-  const client = new OpenAI({
-    apiKey: llm.apiKey,
-    baseURL: llm.provider === 'openrouter'
-      ? (llm.baseURL ?? 'https://openrouter.ai/api/v1')
-      : llm.provider === 'custom' ? llm.baseURL : undefined,
-    timeout: parseInt(process.env.LLM_CALL_TIMEOUT_SEC ?? '60', 10) * 1000,
-  });
+  const client = buildOpenAIClient(state.llm);
 
   const systemPrompt = `You are a Playwright test maintainer performing self-healing repairs.
 You may ONLY make these changes:
@@ -324,13 +321,16 @@ You MUST NOT:
 - Remove any assertion (expect() calls)
 - Modify Gherkin step text (it is frozen)
 - Remove test scenarios
+- Omit files you weren't asked to repair — return EVERY input file in the output, unchanged if you made no edits
 
-Return the repaired files as a JSON object: { "files": [{ "filename": string, "content": string }] }`;
+The filename field MUST be a bare basename (e.g. "common.steps.ts"), NEVER a path like "steps/common.steps.ts".
+
+Return ALL provided files as a JSON object: { "files": [{ "filename": string, "content": string }] }`;
 
   const filesText = stepFiles.map((f) => `=== ${f.filename} ===\n${f.content}`).join('\n\n');
 
   const response = await client.chat.completions.create({
-    model: llm.model,
+    model: state.llm.model,
     messages: [
       { role: 'system', content: systemPrompt },
       {
