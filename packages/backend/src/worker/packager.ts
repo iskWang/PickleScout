@@ -38,9 +38,9 @@ const PINNED_PACKAGE_JSON = {
     '@playwright/test': '1.50.0',
   },
   devDependencies: {
-    typescript: '5.5.0',
+    typescript: '5.5.4',
     'ts-node': '10.9.2',
-    '@types/node': '20.0.0',
+    '@types/node': '20.17.50',
   },
 };
 
@@ -56,6 +56,30 @@ const TSCONFIG = {
   },
   include: ['steps/**/*', 'support/**/*'],
 };
+
+// ─── Verification Dir Setup ──────────────────────────────────────────────────
+
+/**
+ * Writes boilerplate files into the generated artifact directory so the
+ * verifier can run `pnpm install` + `pnpm exec cucumber-js` there.
+ * Must be called after generation and before runVerifier().
+ */
+export async function prepareVerificationDir(artifactDir: string): Promise<void> {
+  const readTemplate = async (name: string): Promise<string> => {
+    const templatePath = path.join(__dirname, '..', 'templates', `${name}.template`);
+    return fs.readFile(templatePath, 'utf-8');
+  };
+
+  await fs.mkdir(path.join(artifactDir, 'support'), { recursive: true });
+
+  await Promise.all([
+    fs.writeFile(path.join(artifactDir, 'package.json'), JSON.stringify(PINNED_PACKAGE_JSON, null, 2), 'utf-8'),
+    fs.writeFile(path.join(artifactDir, 'tsconfig.json'), JSON.stringify(TSCONFIG, null, 2), 'utf-8'),
+    readTemplate('cucumber.js').then((c) => fs.writeFile(path.join(artifactDir, 'cucumber.js'), c, 'utf-8')),
+    readTemplate('world.ts').then((c) => fs.writeFile(path.join(artifactDir, 'support', 'world.ts'), c, 'utf-8')),
+    readTemplate('hooks.ts').then((c) => fs.writeFile(path.join(artifactDir, 'support', 'hooks.ts'), c, 'utf-8')),
+  ]);
+}
 
 // ─── Main Packager ────────────────────────────────────────────────────────────
 
@@ -121,14 +145,14 @@ async function buildZip(
     archive.on('error', reject);
     archive.pipe(output);
 
-    // features/
+    // features/ (basename — LLM may return sub-paths like "features/x.feature")
     for (const f of artifact.featureFiles) {
-      archive.append(f.content, { name: `features/${f.filename}` });
+      archive.append(f.content, { name: `features/${path.basename(f.filename)}` });
     }
 
-    // steps/
+    // steps/ (basename — LLM may return sub-paths like "steps/x.ts")
     for (const s of artifact.stepFiles) {
-      archive.append(s.content, { name: `steps/${s.filename}` });
+      archive.append(s.content, { name: `steps/${path.basename(s.filename)}` });
     }
 
     // Async file additions (templates)
