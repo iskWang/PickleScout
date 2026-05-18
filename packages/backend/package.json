@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
-    "build": "tsc",
+    "build": "tsc && cp -r src/templates dist/templates",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src --ext .ts",
@@ -14,6 +14,7 @@
   "dependencies": {
     "@picklescout/shared": "workspace:*",
     "@browserbasehq/stagehand": "3.0.0",
+    "playwright-core": "1.60.0",
     "@fastify/cors": "9.0.1",
     "@fastify/static": "^7.0.4",
     "archiver": "7.0.1",

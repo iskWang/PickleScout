@@ -18,6 +18,7 @@ const PROVIDERS: { id: LLMProvider; label: string }[] = [
 const PROVIDER_MODELS: Record<LLMProvider, string[]> = {
   openai: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-3.5-turbo'],
   openrouter: [
+    'google/gemini-3.1-flash-lite-preview',
     'anthropic/claude-haiku-4.5',
     'anthropic/claude-sonnet-4-5',
     'openai/gpt-4o',
@@ -25,7 +26,7 @@ const PROVIDER_MODELS: Record<LLMProvider, string[]> = {
     'google/gemini-2.5-flash',
   ],
   anthropic: ['claude-haiku-4-5', 'claude-sonnet-4-5', 'claude-opus-4-5'],
-  gemini: ['gemini-2.5-flash', 'gemini-2.5-pro'],
+  gemini: ['gemini-2.0-flash-lite', 'gemini-2.5-flash', 'gemini-2.5-pro'],
   custom: [],
 };
 

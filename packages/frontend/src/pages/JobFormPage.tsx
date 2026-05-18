@@ -13,7 +13,7 @@ const LLM_CONFIG_KEY = 'llm_config';
 const DEFAULT_LLM: LLMConfig = {
   provider: 'openrouter',
   apiKey: '',
-  model: 'anthropic/claude-haiku-4.5',
+  model: 'google/gemini-3.1-flash-lite-preview',
   baseURL: 'https://openrouter.ai/api/v1',
 };
 

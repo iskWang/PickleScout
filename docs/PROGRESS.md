@@ -1,6 +1,6 @@
 # PickleScout — PRD Implementation Progress
 
-> Last updated: 2026-05-15
+> Last updated: 2026-05-15 (session 2)
 > Tracking completion against PRD.md v1.1
 
 Legend: ✅ Done · ⚠️ Partial · ❌ Not started
@@ -204,6 +204,23 @@ Legend: ✅ Done · ⚠️ Partial · ❌ Not started
 |------|--------|-------|
 | P1: credential leak in validation log | ✅ | `jobs.ts:74` now wraps body in `safeLog()` before logging |
 | P2: Playwright version mismatch in Dockerfile | ✅ | Changed `playwright@1.52.0` → `1.60.0` to match lockfile |
+
+## E2E Pipeline Run Log
+
+### Job e0C278S3_woNWVAO_m2Pg (2026-05-15)
+
+- **Model:** OpenRouter `google/gemini-3.1-flash-lite-preview`
+- **Target:** `https://demo.odoo.com/odoo/sales`
+- ✅ Explorer completed (1 step, navigate)
+- ✅ Pass 1: 2 feature files generated
+- ✅ Pass 2: 3 step files generated
+- ❌ Verifier failed: `spawn bun ENOENT` — Docker container has no `bun` binary
+
+**Root cause:** `verifier.ts` invokes `bun` (or `bunx`) to run cucumber-js inside the artifact. Docker image is Node.js-based (`node:20-slim`); `bun` is not installed.
+
+**Next fix needed:** Replace `bun`/`bunx` calls in `verifier.ts` with `node`/`npx` (or install bun in the Dockerfile).
+
+---
 
 ## pnpm Workspace / Monorepo (Milestone A — Done)
 

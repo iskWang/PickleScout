@@ -39,3 +39,16 @@ PickleScout separates the **Generation** of tests from their **Execution**.
 | Queue | BullMQ + Redis |
 | Browser | Stagehand (Playwright wrapper) |
 | Output | Cucumber.js + Playwright (pinned versions) |
+
+## Agent Reference Docs
+
+| Doc | Purpose |
+|-----|---------|
+| `architecture.md` | System design overview (this file) |
+| `backend-style.md` | Backend coding conventions |
+| `frontend-style.md` | Frontend coding conventions |
+| `react-patterns.md` | React component patterns |
+| `self-test.md` | End-to-end pipeline self-test — run after any worker/packager/template change |
+| `specs/api-contract.md` | API contract |
+| `specs/auth-flow.md` | Auth flow |
+| `specs/state-management.md` | State machine |
