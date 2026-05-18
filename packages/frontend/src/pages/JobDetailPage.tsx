@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useJobStream, TERMINAL_STATUSES } from '../hooks/useJobStream';
 import JobStatusBar from '../components/JobStatusBar';
@@ -10,25 +10,45 @@ import { saveRecentJob, removeRecentJob } from '../components/RecentJobs';
 import { API_BASE } from '../lib/api';
 import './JobDetailPage.css';
 
+interface HallucinationState {
+  risk: boolean;
+  reason: string;
+}
+
 export default function JobDetailPage() {
   const { hash } = useParams<{ hash: string }>();
   const navigate = useNavigate();
   const stream = useJobStream(hash ?? '');
   const [url, setUrl] = useState<string>('');
   const [showUnverifiedModal, setShowUnverifiedModal] = useState(false);
+  const [hallucination, setHallucination] = useState<HallucinationState>({ risk: false, reason: '' });
+  const terminalFetchedRef = useRef(false);
 
-  // Fetch initial job state (for URL display and initial status)
+  const applyJobData = (data: { url?: string; hallucinationRisk?: boolean; hallucinationReason?: string }) => {
+    if (data.url) setUrl(data.url);
+    if (data.hallucinationRisk || data.hallucinationReason) {
+      setHallucination({ risk: !!data.hallucinationRisk, reason: data.hallucinationReason ?? '' });
+    }
+  };
+
   useEffect(() => {
     if (!hash) return;
     fetch(`${API_BASE}/api/jobs/${hash}`)
       .then((r) => r.json())
-      .then((data: { url?: string; status?: string }) => {
-        if (data.url) setUrl(data.url);
-      })
-      .catch(() => {/* 404 handled below */});
+      .then(applyJobData)
+      .catch(() => {});
   }, [hash]);
 
-  // Sync recent jobs when status changes
+  useEffect(() => {
+    if (!hash || !stream.status || !TERMINAL_STATUSES.has(stream.status)) return;
+    if (terminalFetchedRef.current) return;
+    terminalFetchedRef.current = true;
+    fetch(`${API_BASE}/api/jobs/${hash}`)
+      .then((r) => r.json())
+      .then(applyJobData)
+      .catch(() => {});
+  }, [hash, stream.status]);
+
   useEffect(() => {
     if (!hash || !url || !stream.status) return;
     saveRecentJob({
@@ -58,7 +78,6 @@ export default function JobDetailPage() {
   };
 
   const handleRetry = async () => {
-    // Navigate back to form — user will re-submit
     navigate('/');
   };
 
@@ -85,7 +104,6 @@ export default function JobDetailPage() {
   return (
     <div className="page">
       <div className="container">
-        {/* Brand header */}
         <div className="jd-header">
           <Link to="/" className="brand" style={{ textDecoration: 'none', marginBottom: 0 }}>
             <span className="brand-logo">🥒</span>
@@ -96,7 +114,6 @@ export default function JobDetailPage() {
           </button>
         </div>
 
-        {/* Status bar */}
         <JobStatusBar
           url={url || hash}
           status={stream.status}
@@ -106,7 +123,17 @@ export default function JobDetailPage() {
           onCancel={isActive ? handleCancel : undefined}
         />
 
-        {/* In-progress view */}
+        {hallucination.risk && (
+          <div className="notice notice-warning" style={{ marginBottom: 'var(--space-4)' }}>
+            <span>⚠️</span>
+            <div>
+              <strong>Low-confidence tests</strong>
+              {hallucination.reason ? ` — ${hallucination.reason}.` : '.'}
+              {' '}Tests were generated from LLM training data, not observed page behavior.
+            </div>
+          </div>
+        )}
+
         {(isActive || (!isCompleted && !isFailed)) && (
           <div className="jd-progress-grid">
             <ActionLogPanel steps={stream.steps} llmLogs={stream.llmLogs} />
@@ -114,7 +141,6 @@ export default function JobDetailPage() {
           </div>
         )}
 
-        {/* Completed view */}
         {isCompleted && stream.summary && (
           <div className="jd-completed">
             <div className="card jd-success-card">
@@ -151,7 +177,6 @@ export default function JobDetailPage() {
           </div>
         )}
 
-        {/* Failed view */}
         {isFailed && (
           <div className="card jd-failed-card">
             <div className="jd-failed-header">
@@ -197,7 +222,6 @@ export default function JobDetailPage() {
           </div>
         )}
 
-        {/* Unverified download modal */}
         {showUnverifiedModal && (
           <UnverifiedDownloadModal
             hash={hash}

@@ -15,7 +15,7 @@ import { getBullRedisClient, getJobState, updateJobStatus } from '../redis';
 import { runExplorer } from './explorer';
 import { runGenerator, rerunPass2 } from './generator';
 import { runVerifier, attemptSelfHeal, checkStepResolution } from './verifier';
-import { runPackager } from './packager';
+import { runPackager, prepareVerificationDir } from './packager';
 import { emitEvent, resetJobCounter } from './sse';
 import { safeLog } from '../utils/safeLog';
 
@@ -90,6 +90,24 @@ async function processJob(hash: string, signal: AbortSignal): Promise<void> {
     // Phase 1: Exploration
     const actionLog = await runExplorer(state, signal);
 
+    // Detect hallucination risk: exploration produced no interaction entries.
+    // The LLM will fall back to training-data guesses about the site, so flag the
+    // resulting tests as low-confidence. Self-test 'negative' mode asserts on this.
+    const interactionEntries = actionLog.entries.filter(
+      (e) => e.type !== 'goto' && e.type !== 'wait',
+    );
+    if (interactionEntries.length === 0) {
+      const reason =
+        actionLog.entries.length === 0
+          ? 'Exploration captured zero entries — site likely blocked automation'
+          : 'Exploration captured only navigation — no interactive elements observed (auth wall, captcha, or empty page)';
+      await updateJobStatus(hash, { hallucinationRisk: true, hallucinationReason: reason });
+      await emitEvent(hash, {
+        type: 'llm_log',
+        message: `⚠️ Hallucination risk: ${reason}. Generated tests are based on LLM training data, not the actual page.`,
+      });
+    }
+
     // Phase 2: LLM Generation
     const freshState = await getJobState(hash);
     if (!freshState) throw new Error('Job state lost after exploration');
@@ -134,6 +152,9 @@ async function processJob(hash: string, signal: AbortSignal): Promise<void> {
       });
     }
 
+    // Prepare artifact dir with package.json, tsconfig, cucumber.js, support/ before verifier runs
+    await prepareVerificationDir(artifactDir);
+
     // Phase 3: Verification + self-healing loop
     let verificationResult = await runVerifier(freshState, artifactDir, signal);
     let unhealedScenarios = 0;
@@ -150,12 +171,18 @@ async function processJob(hash: string, signal: AbortSignal): Promise<void> {
       const latestState = await getJobState(hash);
       if (!latestState) throw new Error('Job state lost during self-healing');
 
-      // Attempt self-heal
-      currentStepFiles = await attemptSelfHeal(latestState, currentStepFiles, verificationResult.errors, signal);
+      // Attempt self-heal — LLM may return only a subset, so merge by basename onto the existing set.
+      // This preserves files the LLM left untouched and prevents the zip/disk from losing them.
+      const healed = await attemptSelfHeal(latestState, currentStepFiles, verificationResult.errors, signal);
+      const merged = new Map(currentStepFiles.map((f) => [path.basename(f.filename), f]));
+      for (const h of healed) {
+        merged.set(path.basename(h.filename), { filename: path.basename(h.filename), content: h.content });
+      }
+      currentStepFiles = Array.from(merged.values());
 
       // Write healed files back
       for (const f of currentStepFiles) {
-        await fs.writeFile(path.join(artifactDir, 'steps', f.filename), f.content, 'utf-8');
+        await fs.writeFile(path.join(artifactDir, 'steps', path.basename(f.filename)), f.content, 'utf-8');
       }
 
       // Re-verify

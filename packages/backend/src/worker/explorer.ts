@@ -22,6 +22,7 @@
 import path from 'path';
 import fs from 'fs/promises';
 import { V3, type V3Options, type Action } from '@browserbasehq/stagehand';
+import { chromium } from 'playwright-core';
 import { nanoid } from 'nanoid';
 import type {
   JobState,
@@ -42,24 +43,28 @@ function buildStagehandOptions(llm: LLMConfig): V3Options {
   const base: Partial<V3Options> = {
     env: 'LOCAL',
     verbose: 0,
+    localBrowserLaunchOptions: {
+      executablePath: chromium.executablePath(),
+      headless: true,
+      chromiumSandbox: false,
+      args: ['--no-sandbox', '--disable-dev-shm-usage'],
+    },
   };
 
-  // Model name + client options vary by provider
-  const modelName = llm.model;
-
+  // V3 model config: { modelName, ...clientOptions }
+  // OpenRouter/custom: prefix with 'openai/' so Stagehand routes via createOpenAI + baseURL
   switch (llm.provider) {
     case 'openai':
       return {
         ...base,
-        modelName,
-        modelClientOptions: { apiKey: llm.apiKey },
+        model: { modelName: llm.model, apiKey: llm.apiKey },
       } as V3Options;
     case 'openrouter':
     case 'custom':
       return {
         ...base,
-        modelName,
-        modelClientOptions: {
+        model: {
+          modelName: `openai/${llm.model}`,
           apiKey: llm.apiKey,
           baseURL: llm.baseURL ?? 'https://openrouter.ai/api/v1',
         },
@@ -67,14 +72,12 @@ function buildStagehandOptions(llm: LLMConfig): V3Options {
     case 'anthropic':
       return {
         ...base,
-        modelName,
-        modelClientOptions: { apiKey: llm.apiKey },
+        model: { modelName: llm.model, apiKey: llm.apiKey },
       } as V3Options;
     case 'gemini':
       return {
         ...base,
-        modelName,
-        modelClientOptions: { apiKey: llm.apiKey },
+        model: { modelName: llm.model, apiKey: llm.apiKey },
       } as V3Options;
     default:
       throw new Error(`Unknown provider: ${llm.provider}`);
@@ -189,7 +192,18 @@ export async function runExplorer(state: JobState, signal?: AbortSignal): Promis
         break;
       }
 
-      if (observations.length === 0) break;
+      if (observations.length === 0) {
+        // Retry once with a minimal fallback hint — weak models sometimes return nothing
+        // on the first pass with a verbose hint; a simpler prompt often succeeds.
+        try {
+          observations = await withSignal(
+            stagehand.observe('Find any clickable element: button, link, input, or form.')
+          );
+        } catch (err) {
+          if (signal?.aborted) throw err;
+        }
+        if (observations.length === 0) break;
+      }
 
       // Filter out actions we've already taken on this specific page.
       // Use pathname only — querystring may vary across SPA state changes for the same view.

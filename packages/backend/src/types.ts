@@ -29,6 +29,8 @@ export interface JobState {
   createdAt: number;
   updatedAt: number;
   error?: string;
+  hallucinationRisk?: boolean;
+  hallucinationReason?: string;
 }
 
 // ─── ActionLog ────────────────────────────────────────────────────────────────
