@@ -7,11 +7,13 @@ interface Props {
   onChange: (config: LLMConfig) => void;
 }
 
-const PROVIDERS: { id: LLMProvider; label: string }[] = [
+const PROVIDERS: { id: LLMProvider; label: string; disabled?: boolean }[] = [
   { id: 'openai', label: 'OpenAI' },
   { id: 'openrouter', label: 'OpenRouter' },
-  { id: 'anthropic', label: 'Anthropic' },
-  { id: 'gemini', label: 'Google Gemini' },
+  // TODO: enable once generator supports native Anthropic SDK (currently throws)
+  { id: 'anthropic', label: 'Anthropic (coming soon)', disabled: true },
+  // TODO: enable once gemini e2e is validated (explorer works; generator untested end-to-end)
+  { id: 'gemini', label: 'Google Gemini (coming soon)', disabled: true },
   { id: 'custom', label: 'Custom (OpenAI-compatible)' },
 ];
 
@@ -56,7 +58,7 @@ export default function ProviderSelector({ value, onChange }: Props) {
             onChange={(e) => handleProvider(e.target.value as LLMProvider)}
           >
             {PROVIDERS.map((p) => (
-              <option key={p.id} value={p.id}>{p.label}</option>
+              <option key={p.id} value={p.id} disabled={p.disabled}>{p.label}</option>
             ))}
           </select>
         </div>

@@ -186,7 +186,8 @@ Legend: ✅ Done · ⚠️ Partial · ❌ Not started
 
 | Priority | Gap | PRD ref |
 |----------|-----|---------|
-| High | Anthropic + Gemini native support in generator | §3.1 |
+| High | Anthropic native SDK support in generator (currently throws; UI option disabled) | §3.1 |
+| High | Gemini end-to-end validation (explorer works; generator uses OpenAI-compat endpoint but never e2e tested; UI option disabled) | §3.1 |
 | High | Rate limit 429 exponential backoff | §8.1 |
 | Medium | TokenMeter UI component (token_usage SSE event exists) | §7.4 |
 | Medium | `@unhealed` tag written into .feature files | §3.4 |
