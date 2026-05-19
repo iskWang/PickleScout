@@ -49,7 +49,7 @@ function isValidUrl(s: string): boolean {
 
 export default function JobFormPage() {
   const navigate = useNavigate();
-  const [url, setUrl] = useState('');
+  const [url, setUrl] = useState('https://demo.odoo.com/odoo/sales');
   const [hint, setHint] = useState('');
   const [llm, setLlm] = useState<LLMConfig>(loadSavedLlm);
   const [auth, setAuth] = useState<AuthConfig | undefined>(undefined);

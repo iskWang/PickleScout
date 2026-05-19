@@ -31,8 +31,7 @@ packages/backend/src/worker/
 ├── generator.fixtures.test.ts   ← NEW: LLM fixture compliance tests
 ├── verifier.test.ts      ← NEW: extractCucumberErrors + self-heal tests
 └── __fixtures__/
-    ├── pass2-common-steps.json      ← recorded real LLM output (Pass 2a)
-    ├── pass2-feature-steps.json     ← recorded real LLM output (Pass 2b)
+    ├── pass2-intent-spec.json       ← recorded real LLM output (Pass 2 IntentSpec)
     ├── cucumber-result-failed.json  ← realistic cucumber JSON with failures
     ├── cucumber-result-passed.json  ← all-pass cucumber report
     └── cucumber-result-mixed.json   ← some passed, some failed, some undefined
@@ -108,7 +107,7 @@ Run once (requires `OPENROUTER_API_KEY` env var, real LLM call):
 bun run scripts/record-llm-fixtures.ts
 ```
 
-The script calls `pass2aGenerateCommon` and `pass2bGenerateFeatureSteps` against a small canned `ActionLog` (5 steps, Odoo sales), then writes the raw JSON responses to `__fixtures__/`.
+The script calls `pass2GenerateIntentSpec` against a small canned `ActionLog` (5 steps, Odoo sales), then writes the raw JSON response to `__fixtures__/`.
 
 **Fixture format:**
 ```json

@@ -112,10 +112,9 @@ sequenceDiagram
     W->>R: SET status=generating
     W->>L: Pass 1 — ActionLog → .feature files
     L-->>W: Gherkin scenarios
-    W->>L: Pass 2a — .feature → common.steps.ts
-    L-->>W: shared step definitions
-    W->>L: Pass 2b — .feature + common sigs → feature steps
-    L-->>W: feature-specific step definitions
+    W->>L: Pass 2 — .feature → IntentSpec JSON (template mapping)
+    L-->>W: IntentSpec JSON
+    W->>W: Assemble step files from IntentSpec + template catalog
 
     W->>R: SET status=verifying
     W->>W: pnpm install + cucumber-js
