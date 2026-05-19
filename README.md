@@ -4,19 +4,6 @@
 
 ---
 
-## Demo
-
-<!-- Demo video placeholder — replace src with the final embed URL -->
-<p align="center">
-  <a href="https://youtu.be/PLACEHOLDER">
-    <img src="docs/demo-thumbnail.png" alt="PickleScout demo" width="720" />
-  </a>
-</p>
-
-> **[▶ Watch the demo](https://youtu.be/PLACEHOLDER)** · 3 min walkthrough: submit URL → live exploration → download zip → run tests in CI
-
----
-
 ## What it does
 
 1. **Explore** — Stagehand (Playwright + LLM) navigates your app and records an `ActionLog` of every interaction.
@@ -42,7 +29,7 @@ graph TD
     WK -->|cucumber-js| VF[Verifier]
     VF -->|VerificationResult| WK
     WK -->|self-heal if needed| LLM
-    WK -->|result.zip| FS[/storage]
+    WK -->|result.zip| FS[storage volume]
     WK -->|job state| RD[(Redis)]
     BQ --- RD
     API -->|GET /result| FS
@@ -280,7 +267,7 @@ generated-tests/
 ### Run locally
 
 ```bash
-git clone https://github.com/your-org/picklescout
+git clone https://github.com/iskWang/PickleScout
 cd picklescout
 docker compose up
 ```
