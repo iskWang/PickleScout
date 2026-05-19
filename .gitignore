@@ -41,5 +41,4 @@ storage/
 
 # Demo video pipeline (not for version control)
 demo/
-Plans/
 .self-test-output/
