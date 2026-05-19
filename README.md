@@ -1,3 +1,9 @@
+<div align="center">
+  <img src="packages/frontend/src/public/logo.png" alt="PickleScout logo" width="120" />
+  <br/>
+  <img src="packages/frontend/src/public/slogan.png" alt="PickleScout — Web Scraping & Data Navigation" width="420" />
+</div>
+
 # PickleScout
 
 > LLM-driven browser agent that explores your web app and generates a ready-to-run **Cucumber.js + Playwright** test project.

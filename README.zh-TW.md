@@ -1,3 +1,9 @@
+<div align="center">
+  <img src="packages/frontend/src/public/logo.png" alt="PickleScout logo" width="120" />
+  <br/>
+  <img src="packages/frontend/src/public/slogan.png" alt="PickleScout — Web Scraping & Data Navigation" width="420" />
+</div>
+
 # PickleScout
 
 > LLM 驅動的瀏覽器代理人，自動探索你的 Web 應用並產生即用的 **Cucumber.js + Playwright** 測試專案。
