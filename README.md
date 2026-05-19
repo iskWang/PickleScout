@@ -2,6 +2,10 @@
 
 > LLM-driven browser agent that explores your web app and generates a ready-to-run **Cucumber.js + Playwright** test project.
 
+**Browse once, test forever.**
+
+[中文版 README](README.zh-TW.md)
+
 ---
 
 ## What it does
