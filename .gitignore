@@ -42,3 +42,6 @@ storage/
 # Demo video pipeline (not for version control)
 demo/
 .self-test-output/
+
+# Claude Code local session state
+.claude/
