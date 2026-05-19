@@ -13,7 +13,8 @@ COPY packages/shared/package.json ./packages/shared/
 # Skip browser download during pnpm install; we install explicitly below
 RUN PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 pnpm install --frozen-lockfile --filter @picklescout/backend...
 
-# Install Playwright's Chromium + all required system libraries
+# Install Playwright's Chromium + all required system libraries.
+# Version matches both Stagehand (peer >=1.52) and the generated tests (PINNED_PACKAGE_JSON).
 RUN pnpm dlx playwright@1.60.0 install chromium --with-deps
 
 COPY packages/backend/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh

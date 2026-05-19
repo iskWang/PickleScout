@@ -11,10 +11,14 @@ import path from 'path';
 import fs from 'fs/promises';
 import OpenAI from 'openai';
 import { z, ZodError } from 'zod';
-import type { ActionLog, JobState, LLMConfig, TokenUsage } from '../types';
+import type { ActionLog, IntentSpec, JobState, LLMConfig, TokenUsage } from '../types';
 import { updateJobStatus, getJobState } from '../redis';
 import { emitEvent } from './sse';
 import { safeLog } from '../utils/safeLog';
+import { TEMPLATE_CATALOG } from '../templates/steps/index';
+import { assembleStepFiles, assembleFeatureFiles } from './assembler';
+import { buildPageModel, buildSelectorRegistry } from './mapper';
+import { validateOutput } from './output-validator';
 
 const LLM_TIMEOUT = parseInt(process.env.LLM_CALL_TIMEOUT_SEC ?? '60', 10) * 1000;
 const STORAGE_DIR = process.env.STORAGE_DIR ?? '/storage';
@@ -47,17 +51,66 @@ export function buildOpenAIClient(llm: LLMConfig): OpenAI {
   return new OpenAI(options);
 }
 
-function patternFromKey(key: string): string {
-  return key.slice(key.indexOf(':') + 1);
-}
-
 // Strip markdown code fences that some models wrap JSON in
-function stripMarkdownJson(raw: string): string {
+export function stripMarkdownJson(raw: string): string {
   const match = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
   return match ? match[1].trim() : raw.trim();
 }
 
 // ─── Pass 1: ActionLog → Feature Files ────────────────────────────────────────
+
+export function formatActionLogEntry(e: ActionLog['entries'][number]): string {
+  return `[${e.type}] ${e.url ?? e.text ?? e.selector ?? ''} ${e.value ? `= "${e.value}"` : ''}`.trim();
+}
+
+type ParsedElement = { label: string; role: 'button' | 'link' | 'menuitem' | 'input' | 'other'; gherkin: string };
+
+export function parseStagehandDescription(desc: string): ParsedElement | null {
+  const ROLE_SUFFIXES: Array<[RegExp, ParsedElement['role']]> = [
+    [/^(.+?)\s+button(?:\s+.+)?$/i, 'button'],
+    [/^Link to(?:\s+the)?\s+(.+)$/i, 'link'],
+    [/^(.+?)\s+link(?:\s+.+)?$/i, 'link'],
+    [/^(.+?)\s+menu\s+item(?:\s+.+)?$/i, 'menuitem'],
+    [/^(.+?)\s+(?:input\s+field|input|combobox|field|text\s+box)(?:\s+.+)?$/i, 'input'],
+  ];
+
+  for (const [re, role] of ROLE_SUFFIXES) {
+    const m = desc.match(re);
+    if (!m) continue;
+    // For "Link to X" pattern, capture group 1 is the destination label
+    const label = m[1].trim();
+    if (label.length < 2) continue;
+    const gherkin =
+      role === 'button' ? `When I click the "${label}" "button"` :
+      role === 'link'   ? `When I click the "${label}" "link"` :
+      role === 'menuitem' ? `When I click the "${label}" "menuitem"` :
+      `When I fill the "${label}" field with "..."`;
+    return { label, role, gherkin };
+  }
+  return null;
+}
+
+export function extractObservedElements(entries: ActionLog['entries'], targetUrl?: string): string[] {
+  const seen = new Map<string, ParsedElement>(); // label → parsed
+  let onTargetPage = !targetUrl;
+
+  for (const e of entries) {
+    if (e.type === 'goto') {
+      onTargetPage = !targetUrl || (e.url ?? '').startsWith(targetUrl.replace(/\/$/, ''));
+      continue;
+    }
+    if (!onTargetPage || !e.text) continue;
+    for (const part of e.text.split(';')) {
+      const trimmed = part.trim();
+      if (trimmed.length < 3 || trimmed.length > 80) continue;
+      const parsed = parseStagehandDescription(trimmed);
+      if (parsed && !seen.has(parsed.label)) {
+        seen.set(parsed.label, parsed);
+      }
+    }
+  }
+  return [...seen.values()].slice(0, 50).map((p) => p.gherkin);
+}
 
 const FeatureFilesSchema = z.object({
   files: z.array(
@@ -78,13 +131,24 @@ async function pass1GenerateFeatures(
   const positiveCount = Math.round(options.maxScenarios * options.positiveRatio);
   const negativeCount = options.maxScenarios - positiveCount;
 
+  const observedElements = extractObservedElements(actionLog.entries, actionLog.targetUrl);
+  const elementsBlock = observedElements.length > 0
+    ? `\nOBSERVED ELEMENTS — USE THESE EXACT GHERKIN PATTERNS:
+The following step patterns were derived from actual browser observations. Copy them verbatim into your scenarios. Do NOT invent other element names.
+
+${observedElements.map((g) => `- ${g}`).join('\n')}
+
+For assertions (Then steps), use: Then I should see "LABEL" — where LABEL is the quoted label from one of the patterns above.
+`
+    : '';
+
   const systemPrompt = `You are a Gherkin test scenario writer.
 Generate Cucumber .feature files based on the provided browser ActionLog.
-
+${elementsBlock}
 STEP TEXT RULES:
-- Feature step text must use ACTUAL QUOTED VALUES, e.g. When I click the "New" button — NEVER write {string}, {int}, or any placeholder in .feature files
-- {string} and {int} are ONLY for step definitions (*.steps.ts); they must never appear in Gherkin scenario steps
-- Use realistic values derived from the ActionLog (button labels, field names, status texts observed in the browser)
+- Feature step text must use ACTUAL QUOTED VALUES — NEVER write {string}, {int}, or any placeholder
+- Element names in steps MUST come from the OBSERVED ELEMENTS list above. Do NOT invent names.
+- Strip element-type suffixes: "New button" → use "New", not "New button"
 - Step text must be precise (case, whitespace, punctuation matter)
 
 SCENARIO LIMIT:
@@ -107,9 +171,7 @@ Inferred journeys: ${actionLog.inferredJourneys.join(', ')}
 ${state.hint ? `User hint: ${state.hint}` : ''}
 
 Actions recorded:
-${actionLog.entries
-  .map((e) => `[${e.type}] ${e.selector ?? e.url ?? e.text ?? ''} ${e.value ? `= "${e.value}"` : ''}`)
-  .join('\n')}
+${actionLog.entries.map(formatActionLogEntry).join('\n')}
 
 Generate ${options.maxScenarios} Cucumber .feature file scenarios.`;
 
@@ -120,22 +182,9 @@ Generate ${options.maxScenarios} Cucumber .feature file scenarios.`;
   return parsed.files;
 }
 
-// ─── Pass 2: ActionLog + Features → Step Files ────────────────────────────────
+// ─── Pass 2: ActionLog + Features → IntentSpec ────────────────────────────────
 
-const StepFilesSchema = z.object({
-  files: z.array(
-    z.object({
-      filename: z.string(),    // e.g. "login.steps.ts"
-      content: z.string(),     // TypeScript step definitions
-    })
-  ),
-});
-
-const CommonStepSchema = z.object({
-  files: z.array(z.object({ filename: z.string(), content: z.string() })).length(1),
-});
-
-const STEP_SHARED_RULES = `SELECTOR PRIORITY (annotate with a comment):
+export const STEP_SHARED_RULES = `SELECTOR PRIORITY (annotate with a comment):
   1. [data-testid="..."]
   2. [aria-label="..."]
   3. [role="..."]
@@ -155,10 +204,121 @@ ASSERTION RULES:
 - A Then step may NOT consist solely of waitForLoadState or waitForSelector
 - Validate business outcomes: status text, IDs, URLs, visible text
 
+RUNTIME ENVIRONMENT — CRITICAL:
+- Steps run in Node.js (NOT a browser). NEVER use: document, window, HTMLElement, HTMLInputElement, localStorage, sessionStorage, navigator, or any browser-global API.
+- Use ONLY: Playwright Page API (world.page.click, world.page.fill, world.page.locator, world.page.waitForSelector, world.page.goto, world.page.getByRole, etc.) and expect() from @playwright/test.
+- world.page is available via the CustomWorld context parameter. Always type it as: const { page } = world as CustomWorld;
+
 IMPORTS:
 - import { Given, When, Then } from '@cucumber/cucumber';
 - import { expect } from '@playwright/test';
 - import type { CustomWorld } from '../support/world';`;
+
+const TEMPLATE_CATALOG_VERSION = '1.0.0';
+
+const IntentStepSchema = z.object({
+  templateId: z.string(),
+  params: z.record(z.string(), z.string()),
+  description: z.string(),
+});
+
+const IntentScenarioSchema = z.object({
+  name: z.string(),
+  steps: z.array(IntentStepSchema),
+});
+
+const ASSERT_TEMPLATES = new Set(['assert_visible', 'assert_not_visible', 'assert_url_contains']);
+
+const IntentSpecSchema = z.object({
+  version: z.string(),
+  targetUrl: z.string(),
+  scenarios: z.array(IntentScenarioSchema),
+}).superRefine((spec, ctx) => {
+  spec.scenarios.forEach((scenario, i) => {
+    if (scenario.steps.length === 0) return;
+    if (scenario.steps[0].templateId !== 'navigate_to_url') {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['scenarios', i, 'steps', 0], message: `Scenario "${scenario.name}": first step must be navigate_to_url, got "${scenario.steps[0].templateId}"` });
+    }
+    const hasAssertion = scenario.steps.some((s) => ASSERT_TEMPLATES.has(s.templateId));
+    if (!hasAssertion) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['scenarios', i], message: `Scenario "${scenario.name}": missing assertion step (assert_visible / assert_not_visible / assert_url_contains)` });
+    }
+  });
+});
+
+function buildCatalogJson(): string {
+  return JSON.stringify(
+    TEMPLATE_CATALOG.map((t) => ({
+      id: t.templateId,
+      params: t.requiredParams,
+      gherkinVerb: t.gherkinVerb,
+      stepPattern: t.stepPattern,
+      example: t.example,
+    })),
+    null,
+    2,
+  );
+}
+
+export async function pass2GenerateIntentSpec(
+  state: JobState,
+  actionLog: ActionLog,
+  featureFiles: Array<{ filename: string; content: string }>,
+  client: OpenAI,
+  signal?: AbortSignal,
+): Promise<IntentSpec> {
+  const { llm } = state;
+  const catalogJson = buildCatalogJson();
+  const featuresText = featureFiles.map((f) => `=== ${f.filename} ===\n${f.content}`).join('\n\n');
+
+  const system = `You are a test scenario mapper. Your job is to map each Gherkin test step to a template from the catalog below.
+
+OUTPUT: A JSON object with this exact shape:
+{
+  "version": "${TEMPLATE_CATALOG_VERSION}",
+  "targetUrl": "<url>",
+  "scenarios": [
+    {
+      "name": "<scenario name>",
+      "steps": [
+        {
+          "templateId": "<id from catalog>",
+          "params": { "<param_name>": "<actual value>" },
+          "description": "<human description of what this step does>"
+        }
+      ]
+    }
+  ]
+}
+
+RULES:
+- Use ONLY template IDs from the catalog below. Do NOT invent new IDs.
+- For click_by_role, the 'role' param MUST be one of: button, link, tab, menuitem, checkbox, radio
+- If a Gherkin step cannot be mapped to any template, OMIT it (do not include it in the steps array)
+- Do NOT output TypeScript. Do NOT output Gherkin text. Output ONLY the JSON object.
+
+MANDATORY SCENARIO STRUCTURE (violations cause the entire output to be rejected and retried):
+- RULE 1: Every scenario's FIRST step MUST be navigate_to_url with the full target URL. No exceptions.
+- RULE 2: Every scenario MUST contain at least one assertion step: assert_visible, assert_not_visible, or assert_url_contains. A scenario with only click/fill steps is invalid.
+- RULE 3: Do NOT fabricate URLs. Only use the targetUrl or paths clearly observed in the ActionLog.
+
+TEMPLATE CATALOG:
+${catalogJson}`;
+
+  const user = `Target URL: ${actionLog.targetUrl}
+
+Gherkin feature files to map:
+${featuresText}
+
+ActionLog (browser observations for context):
+${actionLog.entries.slice(0, 50).map(formatActionLogEntry).join('\n')}`;
+
+  const { content: raw, usage } = await llmCall(client, llm.model, system, user, signal);
+  if (!raw) throw new Error('LLM returned empty content for Pass 2 IntentSpec');
+  await accumulateTokens(state, usage);
+
+  return IntentSpecSchema.parse(JSON.parse(stripMarkdownJson(raw)));
+}
 
 async function llmCall(
   client: OpenAI,
@@ -201,37 +361,6 @@ async function accumulateTokens(
     completionTokens: prior.completionTokens + delta.completionTokens,
     estimatedCostUSD: prior.estimatedCostUSD + delta.estimatedCostUSD,
   }});
-}
-
-// Pass 2a: generate common.steps.ts with all shared/navigation steps
-async function pass2aGenerateCommon(
-  state: JobState,
-  actionLog: ActionLog,
-  featuresText: string,
-  client: OpenAI,
-  signal?: AbortSignal
-): Promise<{ filename: string; content: string }> {
-
-  const system = `You are a Playwright + Cucumber.js step definition writer.
-${STEP_SHARED_RULES}
-
-Your task: generate ONLY "common.steps.ts" containing every step that appears in more than one feature file, OR that is a navigation/setup step (login, navigation menus, page loads).
-Do NOT include scenario-specific assertion steps in common.steps.ts.
-Return a JSON object: { "files": [{ "filename": "common.steps.ts", "content": "..." }] }`;
-
-  const user = `Target URL: ${actionLog.targetUrl}
-Actions recorded:
-${actionLog.entries.map((e) => `[${e.type}] selector: ${e.selector ?? 'N/A'} value: ${e.value ?? 'N/A'}`).join('\n')}
-
-Feature files:
-${featuresText}`;
-
-  const { content, usage } = await llmCall(client, state.llm.model, system, user, signal);
-  if (!content) throw new Error('LLM returned empty content for Pass 2a');
-  await accumulateTokens(state, usage);
-
-  const parsed = CommonStepSchema.parse(JSON.parse(stripMarkdownJson(content)));
-  return parsed.files[0];
 }
 
 export function extractStepPatterns(content: string): Set<string> {
@@ -296,115 +425,6 @@ export function extractRequiredStepCoverage(
   return required;
 }
 
-function injectMissingStubs(
-  files: Array<{ filename: string; content: string }>,
-  required: Array<{ keyword: string; pattern: string }>,
-  commonKeys: Set<string>,
-): Array<{ filename: string; content: string }> {
-  if (files.length === 0) return files;
-
-  // Collect all pattern strings defined across generated files
-  const allDefined = new Set<string>();
-  for (const k of commonKeys) allDefined.add(patternFromKey(k));
-  for (const f of files) {
-    for (const k of extractStepPatterns(f.content)) allDefined.add(patternFromKey(k));
-  }
-
-  const missing = required.filter(({ pattern }) => !allDefined.has(pattern));
-  if (missing.length === 0) return files;
-
-  const stubLines: string[] = [''];
-  for (const { keyword, pattern } of missing) {
-    const paramCount = (pattern.match(/\{string\}/g) ?? []).length;
-    const paramDecl = Array.from({ length: paramCount }, (_, i) => `_arg${i}: string`).join(', ');
-    const fnArgs = paramDecl ? `, ${paramDecl}` : '';
-    stubLines.push(`${keyword}('${pattern}', async function (this: CustomWorld${fnArgs}) {`);
-    stubLines.push(`  return 'pending';`);
-    stubLines.push(`});`);
-  }
-
-  const last = files[files.length - 1];
-  return [
-    ...files.slice(0, -1),
-    { filename: last.filename, content: last.content + stubLines.join('\n') + '\n' },
-  ];
-}
-
-// Pass 2b: generate feature-specific step files, given pattern signatures from common.steps.ts.
-// Uses signatures (not full content) to keep the prompt small and reduce the chance the
-// LLM ignores the "do not redeclare" rule on weaker models.
-async function pass2bGenerateFeatureSteps(
-  state: JobState,
-  actionLog: ActionLog,
-  featureFiles: Array<{ filename: string; content: string }>,
-  featuresText: string,
-  commonSteps: { filename: string; content: string },
-  client: OpenAI,
-  signal?: AbortSignal
-): Promise<Array<{ filename: string; content: string }>> {
-  const commonKeys = extractStepPatterns(commonSteps.content);
-
-  const requiredPatterns = extractRequiredStepCoverage(featureFiles);
-  const commonPatterns = new Set([...commonKeys].map(patternFromKey));
-
-  const requiredLines = requiredPatterns
-    .filter(({ pattern }) => !commonPatterns.has(pattern))
-    .map(({ keyword, pattern }) => `- ${keyword}('${pattern}')`)
-    .join('\n');
-
-  const signatureLines = [...commonKeys]
-    .map((k) => `- ${k.slice(0, k.indexOf(':'))}('${patternFromKey(k)}')`)
-    .join('\n');
-
-  const system = `You are a Playwright + Cucumber.js step definition writer.
-${STEP_SHARED_RULES}
-
-These step signatures are already defined in common.steps.ts.
-You MUST NOT redeclare any of them in feature-specific files.
-Cucumber loads common.steps.ts automatically — duplicates cause an Ambiguous error.
-
-=== Reserved signatures (DO NOT redeclare) ===
-${signatureLines || '(none)'}
-
-=== Required patterns — YOU MUST implement ALL of these EXACTLY as written ===
-Pattern strings must match character-for-character (word order, "button" vs "link", etc.).
-${requiredLines || '(all covered by common.steps.ts)'}
-
-Return a JSON object: { "files": [{ "filename": "XX_name.steps.ts", "content": "..." }, ...] }
-Do NOT include common.steps.ts in the output — only feature-specific files.`;
-
-  const user = `Target URL: ${actionLog.targetUrl}
-Actions recorded:
-${actionLog.entries.map((e) => `[${e.type}] selector: ${e.selector ?? 'N/A'} value: ${e.value ?? 'N/A'}`).join('\n')}
-
-Feature files to implement (one .steps.ts per .feature file):
-${featuresText}`;
-
-  const { content, usage } = await llmCall(client, state.llm.model, system, user, signal);
-  if (!content) throw new Error('LLM returned empty content for Pass 2b');
-  await accumulateTokens(state, usage);
-
-  const parsed = StepFilesSchema.parse(JSON.parse(stripMarkdownJson(content)));
-  const deduped = parsed.files
-    .filter((f) => path.basename(f.filename) !== 'common.steps.ts')
-    .map((f) => ({ filename: f.filename, content: dedupeStepFile(f.content, commonKeys) }));
-  return injectMissingStubs(deduped, requiredPatterns, commonKeys);
-}
-
-// Pass 2 (public): two-sub-pass + programmatic dedup to prevent duplicate step definitions
-async function pass2GenerateSteps(
-  state: JobState,
-  actionLog: ActionLog,
-  featureFiles: Array<{ filename: string; content: string }>,
-  client: OpenAI,
-  signal?: AbortSignal
-): Promise<Array<{ filename: string; content: string }>> {
-  const featuresText = featureFiles.map((f) => `=== ${f.filename} ===\n${f.content}`).join('\n\n');
-  const commonSteps = await pass2aGenerateCommon(state, actionLog, featuresText, client, signal);
-  const featureSteps = await pass2bGenerateFeatureSteps(state, actionLog, featureFiles, featuresText, commonSteps, client, signal);
-  return [commonSteps, ...featureSteps];
-}
-
 // ─── Main Generator ───────────────────────────────────────────────────────────
 
 export interface GeneratedArtifact {
@@ -447,40 +467,66 @@ export async function runGenerator(
     message: `Pass 1 complete: ${featureFiles.length} feature file(s) generated`,
   });
 
-  // Pass 2: Generate step files (step text is now frozen)
-  await emitEvent(hash, { type: 'llm_log', message: 'Pass 2: generating step definitions…' });
+  // Pass 2: Map Gherkin steps to templates → IntentSpec
+  await emitEvent(hash, { type: 'llm_log', message: 'Pass 2: mapping steps to templates…' });
 
-  let stepFiles: Array<{ filename: string; content: string }>;
+  let intentSpec;
   try {
-    stepFiles = await pass2GenerateSteps(state, actionLog, featureFiles, client, signal);
+    intentSpec = await pass2GenerateIntentSpec(state, actionLog, featureFiles, client, signal);
   } catch (err) {
     if (!(err instanceof SyntaxError) && !(err instanceof ZodError)) throw err;
     // eslint-disable-next-line no-console
     console.warn(safeLog({ msg: 'Pass 2 parse error, retrying', hash, err: String(err) }));
     await emitEvent(hash, { type: 'llm_log', message: 'LLM output parse error, retrying Pass 2…' });
-    stepFiles = await pass2GenerateSteps(state, actionLog, featureFiles, client, signal);
+    intentSpec = await pass2GenerateIntentSpec(state, actionLog, featureFiles, client, signal);
+  }
+
+  const pageModel = buildPageModel(actionLog.entries);
+  buildSelectorRegistry(pageModel); // validates; registry persisted for debugging
+
+  const { files: stepFiles, unimplementedTemplates } = assembleStepFiles(intentSpec, TEMPLATE_CATALOG);
+  const assembledFeatureFiles = assembleFeatureFiles(intentSpec, TEMPLATE_CATALOG);
+
+  if (unimplementedTemplates.length > 0) {
+    await emitEvent(hash, {
+      type: 'llm_log',
+      message: `Pass 2: ${unimplementedTemplates.length} template(s) not in catalog: ${unimplementedTemplates.join(', ')}`,
+    });
   }
 
   // eslint-disable-next-line no-console
-  console.log(safeLog({ msg: 'Pass 2 complete', hash, stepFileCount: stepFiles.length }));
+  console.log(safeLog({ msg: 'Pass 2 complete', hash, stepFileCount: stepFiles.length, unimplemented: unimplementedTemplates.length }));
   await emitEvent(hash, {
     type: 'llm_log',
-    message: `Pass 2 complete: ${stepFiles.length} step file(s) generated`,
+    message: `Pass 2 complete: ${stepFiles.length} step file(s) assembled from templates`,
   });
+
+  // Output validation — static analysis before packaging
+  const validation = validateOutput(assembledFeatureFiles, stepFiles, TEMPLATE_CATALOG);
+  if (!validation.valid) {
+    const errors = validation.issues.filter((i) => i.severity === 'error');
+    // eslint-disable-next-line no-console
+    console.warn(safeLog({ msg: 'Output validation errors', hash, count: errors.length }));
+    for (const issue of errors) {
+      await emitEvent(hash, { type: 'llm_log', message: `[OUTPUT_VALIDATION] ${issue.code}: ${issue.message}` });
+    }
+  }
 
   // Persist generated files to storage
   const genDir = path.join(STORAGE_DIR, 'generated', hash);
   await fs.mkdir(path.join(genDir, 'features'), { recursive: true });
   await fs.mkdir(path.join(genDir, 'steps'), { recursive: true });
 
-  for (const f of featureFiles) {
+  await fs.writeFile(path.join(genDir, 'intent-spec.json'), JSON.stringify(intentSpec, null, 2), 'utf-8');
+
+  for (const f of assembledFeatureFiles) {
     await fs.writeFile(path.join(genDir, 'features', path.basename(f.filename)), f.content, 'utf-8');
   }
   for (const s of stepFiles) {
     await fs.writeFile(path.join(genDir, 'steps', path.basename(s.filename)), s.content, 'utf-8');
   }
 
-  return { featureFiles, stepFiles };
+  return { featureFiles: assembledFeatureFiles, stepFiles };
 }
 
 // ─── Pass 2 retry (called by step resolution logic in index.ts) ───────────────
@@ -496,18 +542,21 @@ export async function rerunPass2(
 
   await emitEvent(hash, { type: 'llm_log', message: 'Step resolution failed — regenerating Pass 2…' });
 
-  let stepFiles: Array<{ filename: string; content: string }>;
+  let intentSpec;
   try {
-    stepFiles = await pass2GenerateSteps(state, actionLog, featureFiles, client, signal);
+    intentSpec = await pass2GenerateIntentSpec(state, actionLog, featureFiles, client, signal);
   } catch (err) {
     if (!(err instanceof SyntaxError) && !(err instanceof ZodError)) throw err;
     // eslint-disable-next-line no-console
     console.warn(safeLog({ msg: 'Pass 2 retry parse error, retrying once', hash, err: String(err) }));
     await emitEvent(hash, { type: 'llm_log', message: 'LLM output parse error, retrying Pass 2…' });
-    stepFiles = await pass2GenerateSteps(state, actionLog, featureFiles, client, signal);
+    intentSpec = await pass2GenerateIntentSpec(state, actionLog, featureFiles, client, signal);
   }
 
+  const { files: stepFiles } = assembleStepFiles(intentSpec, TEMPLATE_CATALOG);
+
   const genDir = path.join(STORAGE_DIR, 'generated', hash);
+  await fs.writeFile(path.join(genDir, 'intent-spec.json'), JSON.stringify(intentSpec, null, 2), 'utf-8');
   for (const s of stepFiles) {
     await fs.writeFile(path.join(genDir, 'steps', path.basename(s.filename)), s.content, 'utf-8');
   }
@@ -516,7 +565,7 @@ export async function rerunPass2(
   console.log(safeLog({ msg: 'Pass 2 retry complete', hash, stepFileCount: stepFiles.length }));
   await emitEvent(hash, {
     type: 'llm_log',
-    message: `Pass 2 retry complete: ${stepFiles.length} step file(s) regenerated`,
+    message: `Pass 2 retry complete: ${stepFiles.length} step file(s) reassembled`,
   });
 
   return stepFiles;

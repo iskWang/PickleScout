@@ -262,7 +262,7 @@ generated-tests/
 │   └── hooks.ts               ← Before/After browser lifecycle
 ├── cucumber.js                ← Cucumber config
 ├── playwright.config.ts
-├── package.json               ← exact-pinned: @cucumber/cucumber@11.0.0, @playwright/test@1.50.0
+├── package.json               ← exact-pinned: @cucumber/cucumber@11.0.0, @playwright/test@1.60.0
 ├── tsconfig.json
 ├── .github/workflows/e2e.yml  ← ready-to-use GitHub Actions workflow
 ├── .env.example

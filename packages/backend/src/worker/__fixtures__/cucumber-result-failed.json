@@ -1,0 +1,11 @@
+[{
+  "uri": "features/01_sales.feature",
+  "elements": [{
+    "name": "Create a new sales order",
+    "steps": [
+      { "name": "I am on the Sales page", "result": { "status": "passed", "duration": 1000000 } },
+      { "name": "I click the New button", "result": { "status": "failed", "error_message": "TimeoutError: page.waitForSelector: Timeout 30000ms exceeded.\nSelector: [data-menu-xmlid=\"sale.action_quotations\"]", "duration": 30000000000 } },
+      { "name": "I should see the order form", "result": { "status": "skipped", "duration": 0 } }
+    ]
+  }]
+}]

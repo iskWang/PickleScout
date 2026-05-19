@@ -39,10 +39,20 @@ const EXPLORE_MAX_TIME_MS = 15 * 60 * 1000; // 15 minutes limit for exploration
 
 // ─── LLM config → Stagehand V3Options ────────────────────────────────────────
 
-function buildStagehandOptions(llm: LLMConfig): V3Options {
+const STAGEHAND_SYSTEM_PROMPT = `When selecting page elements, prefer stable data attributes in this priority order:
+1. data-testid — React and test-harness attributes (most stable)
+2. data-id or data-command-category — Odoo-specific unique identifiers
+3. aria-label or ARIA role selectors
+4. CSS id or class selectors
+
+XPath selectors are FORBIDDEN. Never generate XPath or //*[...] expressions.
+Always use the most specific and stable attribute selector available.`;
+
+export function buildStagehandOptions(llm: LLMConfig): V3Options {
   const base: Partial<V3Options> = {
     env: 'LOCAL',
     verbose: 0,
+    systemPrompt: STAGEHAND_SYSTEM_PROMPT,
     localBrowserLaunchOptions: {
       executablePath: chromium.executablePath(),
       headless: true,
@@ -82,6 +92,46 @@ function buildStagehandOptions(llm: LLMConfig): V3Options {
     default:
       throw new Error(`Unknown provider: ${llm.provider}`);
   }
+}
+
+type DomInfo = { text: string; role: string };
+
+// Reads actual DOM text + role for an element (sequential — avoids locator race).
+// text: textContent → aria-label → placeholder (first non-empty, max 80 chars)
+// role: aria role attribute → HTML tag mapping (button/a/input/select)
+// Falls back to undefined so callers use the Stagehand description instead.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function getDomInfo(page: any, selector: string): Promise<DomInfo | undefined> {
+  if (!page || !selector) return undefined;
+  try {
+    const loc = page.locator(selector).first();
+
+    let text: string | undefined;
+    try { const v = ((await loc.textContent()) ?? '').trim(); if (v.length > 0 && v.length <= 80) text = v; } catch { /* ignore */ }
+    if (!text) { try { const v = ((await loc.getAttribute('aria-label')) ?? '').trim(); if (v.length > 0 && v.length <= 80) text = v; } catch { /* ignore */ } }
+    if (!text) { try { const v = ((await loc.getAttribute('placeholder')) ?? '').trim(); if (v.length > 0 && v.length <= 80) text = v; } catch { /* ignore */ } }
+    if (!text) return undefined;
+
+    let role = '';
+    try { role = ((await loc.getAttribute('role')) ?? '').trim(); } catch { /* ignore */ }
+    if (!role) {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const tag = await loc.evaluate((el: any) => el.tagName.toLowerCase());
+        const TAG_ROLE: Record<string, string> = { button: 'button', a: 'link', input: 'input', select: 'select', textarea: 'input' };
+        role = TAG_ROLE[tag] || '';
+      } catch { /* ignore */ }
+    }
+
+    return { text, role };
+  } catch { /* best-effort */ }
+  return undefined;
+}
+
+// Fallback: extracts role keyword from Stagehand description when DOM info is unavailable.
+function extractRoleSuffix(description: string): string {
+  const m = description.match(/\b(button|link|menu item|input field|combobox|field|text box|checkbox|radio)\b/i);
+  return m ? m[1].toLowerCase() : '';
 }
 
 // ─── Explorer ─────────────────────────────────────────────────────────────────
@@ -142,9 +192,19 @@ export async function runExplorer(state: JobState, signal?: AbortSignal): Promis
   try {
     await withSignal(stagehand.init());
 
+    // Direct Playwright navigation rather than `stagehand.act("Navigate to X")`.
+    // The latter routes through the LLM and weak models (e.g. flash-lite) often
+    // return no tool-call, leaving the page on about:blank — observe() then
+    // sees nothing and the run trips the hallucination guard with only a goto.
+    const pageNavigate = async (target: string): Promise<void> => {
+      const page = stagehand.context.activePage() ?? stagehand.context.pages()[0];
+      if (!page) throw new Error('No active page available for navigation');
+      await page.goto(target, { waitUntil: 'load', timeoutMs: 30_000 });
+    };
+
     // ── Handle form auth ──────────────────────────────────────────────────────
     if (auth?.type === 'form') {
-      await withSignal(stagehand.act(`Navigate to ${auth.loginUrl}`));
+      await withSignal(pageNavigate(auth.loginUrl));
       await recordEntry({ type: 'goto', url: auth.loginUrl });
 
       await withSignal(stagehand.act(`Fill the username or login field with "${auth.username}"`));
@@ -158,7 +218,7 @@ export async function runExplorer(state: JobState, signal?: AbortSignal): Promis
     }
 
     // ── Navigate to target URL ─────────────────────────────────────────────
-    await withSignal(stagehand.act(`Navigate to ${url}`));
+    await withSignal(pageNavigate(url));
     await recordEntry({ type: 'goto', url });
 
     // ── Exploration loop ────────────────────────────────────────────────────
@@ -218,9 +278,24 @@ export async function runExplorer(state: JobState, signal?: AbortSignal): Promis
 
       const unvisitedAction = unvisitedObservations[0];
 
+      // Get the current page reference once — used for DOM enrichment and screenshot.
+      const page = stagehand.context.activePage() ?? stagehand.context.pages()[0] ?? null;
+
+      // Enrich each observed element's description with its real DOM text + role.
+      const enrichedDescs: string[] = [];
+      for (const o of unvisitedObservations.slice(0, 5)) {
+        const info = await getDomInfo(page, o.selector ?? '');
+        if (info) {
+          const role = info.role || extractRoleSuffix(o.description).trim();
+          enrichedDescs.push(role ? `${info.text} ${role}` : info.text);
+        } else {
+          enrichedDescs.push(o.description);
+        }
+      }
+
       const observeEntry = await recordEntry({
         type: 'observe',
-        text: unvisitedObservations.map((o) => o.description).slice(0, 5).join('; ').slice(0, 300),
+        text: enrichedDescs.join('; ').slice(0, 300),
       });
 
       // Take screenshot every 3 steps
@@ -229,7 +304,6 @@ export async function runExplorer(state: JobState, signal?: AbortSignal): Promis
         const screenshotPath = path.join(screenshotDir, screenshotFilename);
 
         try {
-          const page = stagehand.context.activePage() ?? stagehand.context.pages()[0];
           if (page) {
             const buf = await page.screenshot();
             await fs.writeFile(screenshotPath, buf);
@@ -243,11 +317,25 @@ export async function runExplorer(state: JobState, signal?: AbortSignal): Promis
         } catch { /* best-effort */ }
       }
 
+      // Read DOM info BEFORE clicking — element may disappear after the action.
+      const clickInfo = await getDomInfo(page, unvisitedAction.selector ?? '');
+      let clickText = unvisitedAction.description;
+      if (clickInfo) {
+        const role = clickInfo.role || extractRoleSuffix(unvisitedAction.description).trim();
+        clickText = role ? `${clickInfo.text} ${role}` : clickInfo.text;
+      }
+
       // Execute the specific unvisited action
       try {
         visitedActions.add(`${currentPath}::${unvisitedAction.selector}::${unvisitedAction.description}`);
+        const urlBefore = stagehand.context.activePage()?.url() ?? '';
         await withSignal(stagehand.act(unvisitedAction));
-        await recordEntry({ type: 'click', selector: unvisitedAction.selector, text: unvisitedAction.description });
+        await recordEntry({ type: 'click', selector: unvisitedAction.selector, text: clickText });
+        // If the click caused navigation, record a goto so targetUrl filtering stays accurate.
+        const urlAfter = stagehand.context.activePage()?.url() ?? '';
+        if (urlAfter && urlAfter !== urlBefore && !urlAfter.startsWith('about:')) {
+          await recordEntry({ type: 'goto', url: urlAfter });
+        }
       } catch (err) {
         if (signal?.aborted) throw err;
         // Navigation or action failed — stop exploration gracefully

@@ -9,6 +9,9 @@ import { useEffect, useRef, useState } from 'react';
 import { API_BASE } from '../lib/api';
 import type { JobStatus, JobSummary, StreamEvent, TokenUsage } from '../types';
 
+const toAbsoluteUrl = (url: string) =>
+  url.startsWith('http') ? url : `${API_BASE}${url}`;
+
 export interface StepEntry {
   stepNumber: number;
   action: string;
@@ -104,7 +107,7 @@ export function useJobStream(hash: string): JobStreamState {
             }
 
             case 'screenshot':
-              return { ...prev, screenshots: [...prev.screenshots, event.url] };
+              return { ...prev, screenshots: [...prev.screenshots, toAbsoluteUrl(event.url)] };
 
             case 'llm_log':
               return { ...prev, llmLogs: [...prev.llmLogs, event.message] };
@@ -120,9 +123,12 @@ export function useJobStream(hash: string): JobStreamState {
               };
 
             case 'complete':
+              // Carry the summary + resultUrl, but DON'T mark the job completed here.
+              // Status is owned by `status` events — flipping to 'completed' on `complete`
+              // races the backend, which still writes `status: failed` afterward when
+              // verification failed or hallucinationRisk is set.
               return {
                 ...prev,
-                status: 'completed',
                 summary: event.summary,
                 resultUrl: event.resultUrl,
               };
@@ -135,9 +141,10 @@ export function useJobStream(hash: string): JobStreamState {
           }
         });
 
-        // Close if terminal
+        // Close only on a terminal `status` event or non-retryable error.
+        // `complete` is NOT a terminator — the backend still emits `status` afterward,
+        // and on failed/hallucinated runs that final status decides UI state.
         if (
-          event.type === 'complete' ||
           (event.type === 'status' && TERMINAL_STATUSES.has(event.status)) ||
           (event.type === 'error' && !event.retryable)
         ) {

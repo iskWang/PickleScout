@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { extractStepPatterns, dedupeStepFile, extractRequiredStepCoverage } from './generator';
+import { extractStepPatterns, dedupeStepFile, extractRequiredStepCoverage, STEP_SHARED_RULES, stripMarkdownJson, formatActionLogEntry, extractObservedElements } from './generator';
 
 const IMPORTS = `import { Given, When, Then } from '@cucumber/cucumber';\nimport { page } from '../support/world';\n\n`;
 
@@ -180,5 +180,170 @@ describe('extractRequiredStepCoverage', () => {
     expect(patterns).toContain('I click the {string} link');
     expect(patterns).toContain('I should see {string} in the status header');
     expect(patterns).toContain('I enter {string} into the search bar');
+  });
+});
+
+describe('STEP_SHARED_RULES — runtime guard', () => {
+  it('forbids document and window', () => {
+    expect(STEP_SHARED_RULES).toContain('NEVER use: document');
+    expect(STEP_SHARED_RULES).toContain('window');
+  });
+  it('forbids HTMLInputElement and HTMLElement', () => {
+    expect(STEP_SHARED_RULES).toContain('HTMLInputElement');
+    expect(STEP_SHARED_RULES).toContain('HTMLElement');
+  });
+  it('forbids localStorage, sessionStorage, navigator', () => {
+    expect(STEP_SHARED_RULES).toContain('localStorage');
+    expect(STEP_SHARED_RULES).toContain('sessionStorage');
+    expect(STEP_SHARED_RULES).toContain('navigator');
+  });
+  it('prescribes world.page as access pattern', () => {
+    expect(STEP_SHARED_RULES).toContain('world.page');
+  });
+  it('forbids XPath', () => {
+    expect(STEP_SHARED_RULES).toContain('XPath is FORBIDDEN');
+  });
+  it('requires expect() in Then steps', () => {
+    expect(STEP_SHARED_RULES).toContain('Every Then step must contain at least one expect() call');
+  });
+  it('specifies all three required imports', () => {
+    expect(STEP_SHARED_RULES).toContain('@cucumber/cucumber');
+    expect(STEP_SHARED_RULES).toContain('@playwright/test');
+    expect(STEP_SHARED_RULES).toContain('../support/world');
+  });
+});
+
+describe('stripMarkdownJson', () => {
+  it('strips ```json fence', () => {
+    expect(stripMarkdownJson('```json\n{"a":1}\n```')).toBe('{"a":1}');
+  });
+  it('strips plain ``` fence', () => {
+    expect(stripMarkdownJson('```\n{"a":1}\n```')).toBe('{"a":1}');
+  });
+  it('passes through plain JSON unchanged', () => {
+    expect(stripMarkdownJson('{"a":1}')).toBe('{"a":1}');
+  });
+  it('trims surrounding whitespace', () => {
+    expect(stripMarkdownJson('  {"a":1}  ')).toBe('{"a":1}');
+  });
+  it('returns empty string on empty input', () => {
+    expect(stripMarkdownJson('')).toBe('');
+  });
+});
+
+describe('formatActionLogEntry — XPath suppression', () => {
+  it('prefers text label over XPath selector for click entries', () => {
+    const entry = {
+      id: 'e1', timestamp: 0, type: 'click' as const,
+      selector: 'xpath=/html[1]/body[1]/div[1]/button[1]',
+      text: 'New quotation button',
+    };
+    const result = formatActionLogEntry(entry);
+    expect(result).toContain('New quotation button');
+    expect(result).not.toContain('xpath=');
+    expect(result).not.toContain('/html[');
+  });
+
+  it('shows url for goto entries (no text on goto)', () => {
+    const entry = {
+      id: 'e2', timestamp: 0, type: 'goto' as const,
+      url: 'https://example.com',
+    };
+    const result = formatActionLogEntry(entry);
+    expect(result).toContain('https://example.com');
+    expect(result).not.toContain('xpath=');
+  });
+
+  it('falls back to selector when text is absent (e.g. auth fill)', () => {
+    const entry = {
+      id: 'e3', timestamp: 0, type: 'fill' as const,
+      selector: 'username input',
+      value: '[REDACTED]',
+    };
+    const result = formatActionLogEntry(entry);
+    expect(result).toContain('username input');
+    expect(result).toContain('[REDACTED]');
+  });
+
+  it('never emits xpath= prefix into LLM prompt from a real Stagehand-style action log', () => {
+    const xpathEntries = [
+      { id: 'e1', timestamp: 0, type: 'click' as const, selector: 'xpath=/html[1]/body[1]/header[1]/nav[1]/a[1]', text: 'Home menu link' },
+      { id: 'e2', timestamp: 0, type: 'click' as const, selector: 'xpath=/html[1]/body[1]/div[1]/div[2]/div[1]/a[1]', text: 'Discuss module option' },
+      { id: 'e3', timestamp: 0, type: 'click' as const, selector: 'xpath=/html[1]/body[1]/header[1]/nav[1]/div[3]/button[1]', text: 'AI button' },
+    ];
+    const prompt = xpathEntries.map(formatActionLogEntry).join('\n');
+    expect(prompt).not.toMatch(/xpath=/);
+    expect(prompt).toContain('Home menu link');
+    expect(prompt).toContain('Discuss module option');
+    expect(prompt).toContain('AI button');
+  });
+});
+
+// ─── extractObservedElements ──────────────────────────────────────────────────
+
+describe('extractObservedElements — observed elements allowlist', () => {
+  const makeEntry = (type: 'click' | 'observe' | 'goto', text?: string, url?: string) =>
+    ({ id: 'x', timestamp: 0, type, text, selector: '', url: url ?? '' } as any);
+
+  it('parses "X button" into click_by_role gherkin pattern', () => {
+    const entries = [makeEntry('observe', 'New button; Save manually button')];
+    const result = extractObservedElements(entries);
+    expect(result).toContain('When I click the "New" "button"');
+    expect(result).toContain('When I click the "Save manually" "button"');
+  });
+
+  it('parses "X link" and "Link to X" into click_by_role link pattern', () => {
+    const entries = [makeEntry('observe', 'Quotations link; Link to the Sales Orders list')];
+    const result = extractObservedElements(entries);
+    expect(result).toContain('When I click the "Quotations" "link"');
+    expect(result).toContain('When I click the "Sales Orders list" "link"');
+  });
+
+  it('parses "X input field" / "X combobox" into fill pattern', () => {
+    const entries = [makeEntry('observe', 'Customer combobox')];
+    const result = extractObservedElements(entries);
+    expect(result).toContain('When I fill the "Customer" field with "..."');
+  });
+
+  it('excludes entries without text', () => {
+    const entries = [makeEntry('goto', undefined)];
+    expect(extractObservedElements(entries)).toHaveLength(0);
+  });
+
+  it('deduplicates by label — same label from two entries appears once', () => {
+    const entries = [
+      makeEntry('observe', 'New button'),
+      makeEntry('click', 'New button to create a new sales order'),
+    ];
+    const result = extractObservedElements(entries);
+    expect(result.filter((g) => g.includes('"New"'))).toHaveLength(1);
+  });
+
+  it('excludes elements observed on other pages when targetUrl is given', () => {
+    const entries = [
+      makeEntry('goto', undefined, 'https://example.com/sales'),
+      makeEntry('observe', 'New button; Save button'),
+      makeEntry('goto', undefined, 'https://example.com/other'),
+      makeEntry('observe', 'Home menu button; Settings link'),
+    ];
+    const result = extractObservedElements(entries, 'https://example.com/sales');
+    expect(result.some((g) => g.includes('"New"'))).toBe(true);
+    expect(result.some((g) => g.includes('"Home menu"'))).toBe(false);
+    expect(result.some((g) => g.includes('"Settings"'))).toBe(false);
+  });
+
+  it('includes elements after returning to target URL', () => {
+    const entries = [
+      makeEntry('goto', undefined, 'https://example.com/sales'),
+      makeEntry('observe', 'New button'),
+      makeEntry('goto', undefined, 'https://example.com/other'),
+      makeEntry('observe', 'Foreign element button'),
+      makeEntry('goto', undefined, 'https://example.com/sales'),
+      makeEntry('observe', 'Confirm button'),
+    ];
+    const result = extractObservedElements(entries, 'https://example.com/sales');
+    expect(result.some((g) => g.includes('"New"'))).toBe(true);
+    expect(result.some((g) => g.includes('"Confirm"'))).toBe(true);
+    expect(result.some((g) => g.includes('"Foreign element"'))).toBe(false);
   });
 });

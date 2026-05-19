@@ -35,7 +35,7 @@ const PINNED_PACKAGE_JSON = {
   },
   dependencies: {
     '@cucumber/cucumber': '11.0.0',
-    '@playwright/test': '1.50.0',
+    '@playwright/test': '1.60.0',
   },
   devDependencies: {
     typescript: '5.5.4',
@@ -113,13 +113,18 @@ export async function runPackager(
     estimatedCostUSD: state.tokenUsage.estimatedCostUSD,
   };
 
-  const resultUrl = `/api/jobs/${hash}/result`;
-
-  await emitEvent(hash, {
-    type: 'complete',
-    resultUrl,
-    summary,
-  });
+  // Only emit `complete` for verified runs. A failed/unverified run is terminated
+  // by the orchestrator's `status: failed` event — emitting `complete` here would
+  // race that status update and let the frontend briefly render "Generation Complete"
+  // before flipping to failed.
+  if (verificationPassed) {
+    const resultUrl = `/api/jobs/${hash}/result`;
+    await emitEvent(hash, {
+      type: 'complete',
+      resultUrl,
+      summary,
+    });
+  }
 
   return zipPath;
 }

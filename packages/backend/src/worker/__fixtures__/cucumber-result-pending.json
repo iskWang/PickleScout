@@ -1,0 +1,9 @@
+[{
+  "uri": "features/01_sales.feature",
+  "elements": [{
+    "name": "Pending step scenario",
+    "steps": [
+      { "name": "I do something pending", "result": { "status": "pending", "duration": 0 } }
+    ]
+  }]
+}]

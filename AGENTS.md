@@ -8,7 +8,7 @@ Architecture overview: .agents/architecture.md
 - Backend: Node.js 20, TypeScript 5.5, Fastify 4
 - Browser: Stagehand v3 (Chromium only)
 - Queue: Redis 7 + bullmq 5
-- Output: Cucumber.js 11.0.0 + Playwright 1.50.0 (exact-pinned)
+- Output: Cucumber.js 11.0.0 + Playwright 1.60.0 (exact-pinned)
 
 ## Monorepo layout
 
@@ -49,6 +49,24 @@ Before declaring a task complete, the Agent MUST:
 3. **Tests**: Run `pnpm -r test` and ensure all tests pass (no regressions).
 4. **PRD Sync**: Verify that any new fields or logic strictly follow `docs/PRD.md`.
 5. **Hygiene**: Ensure all temporary files or test artifacts are cleaned up.
+
+## Job Error Investigation Protocol
+When a job error is reported, the Agent MUST proactively check ALL of the following — do NOT wait to be asked:
+
+1. **Action log** (`/storage/action-logs/{hash}.json`): selectors, entry types, XPath presence
+2. **Intent spec** (`/storage/generated/{hash}/intent-spec.json`): templateIds used, param values, scenario structure
+3. **Feature files** (`/storage/generated/{hash}/features/*.feature`):
+   - Every step has a matching step definition (no unmatched patterns)
+   - At least one `Then` assertion per scenario (not pure navigation/click chains)
+   - No hallucinated URLs that don't plausibly exist on the target site
+4. **Step file** (`/storage/generated/{hash}/steps/steps.ts`):
+   - Implementation matches the template catalog (no self-healer rewrites — no hardcoded `baseUrl`, `waitUntil`, etc.)
+   - No XPath (`/html[`, `xpath=`) in any locator call
+   - No `document.`, `window.`, `HTMLElement` references
+5. **TypeScript**: Run `tsc --noEmit` in the generated project dir to confirm it compiles
+6. **Step pattern matching**: Every Gherkin step in every `.feature` maps to a `Given/When/Then(...)` in `steps.ts`
+
+Any gap found MUST be fixed and covered by a unit test before the fix is considered complete.
 
 ## Boundaries
 Always (no confirmation needed):

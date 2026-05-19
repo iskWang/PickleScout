@@ -1,0 +1,9 @@
+[{
+  "uri": "features/01_sales.feature",
+  "elements": [{
+    "name": "Undefined step scenario",
+    "steps": [
+      { "name": "I do something undefined", "result": { "status": "undefined", "duration": 0 } }
+    ]
+  }]
+}]

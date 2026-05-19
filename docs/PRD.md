@@ -665,7 +665,7 @@ module.exports = {
   },
   "dependencies": {
     "@cucumber/cucumber": "11.0.0",
-    "@playwright/test": "1.50.0"
+    "@playwright/test": "1.60.0"
   },
   "devDependencies": {
     "typescript": "5.5.0",
@@ -1222,7 +1222,7 @@ Architecture overview: .agents/architecture.md
 - Backend: Node.js 20, TypeScript 5.5, Fastify 4
 - Browser: Stagehand v3 (Chromium only)
 - Queue: Redis 7 + bullmq 5
-- Output: Cucumber.js 11.0.0 + Playwright 1.50.0 (exact-pinned)
+- Output: Cucumber.js 11.0.0 + Playwright 1.60.0 (exact-pinned)
 
 ## Commands
 ```bash

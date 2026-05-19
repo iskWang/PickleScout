@@ -16,6 +16,8 @@ import { runExplorer } from './explorer';
 import { runGenerator, rerunPass2 } from './generator';
 import { runVerifier, attemptSelfHeal, checkStepResolution } from './verifier';
 import { runPackager, prepareVerificationDir } from './packager';
+import { validateOutput } from './output-validator';
+import { TEMPLATE_CATALOG } from '../templates/steps/index';
 import { emitEvent, resetJobCounter } from './sse';
 import { safeLog } from '../utils/safeLog';
 
@@ -173,14 +175,39 @@ async function processJob(hash: string, signal: AbortSignal): Promise<void> {
 
       // Attempt self-heal — LLM may return only a subset, so merge by basename onto the existing set.
       // This preserves files the LLM left untouched and prevents the zip/disk from losing them.
+      const preHealFiles = new Map(currentStepFiles.map((f) => [path.basename(f.filename), f]));
       const healed = await attemptSelfHeal(latestState, currentStepFiles, verificationResult.errors, signal);
-      const merged = new Map(currentStepFiles.map((f) => [path.basename(f.filename), f]));
+      const merged = new Map(preHealFiles);
       for (const h of healed) {
         merged.set(path.basename(h.filename), { filename: path.basename(h.filename), content: h.content });
       }
+      const mergedFiles = Array.from(merged.values());
+
+      // Guard: revert any file where self-healer introduced TEMPLATE_MODIFIED or ROGUE_SET_TIMEOUT
+      const healValidation = validateOutput(artifact.featureFiles, mergedFiles, TEMPLATE_CATALOG);
+      const protectedCodes = new Set(['TEMPLATE_MODIFIED', 'ROGUE_SET_TIMEOUT', 'XPATH_IN_STEPS', 'BROWSER_GLOBAL']);
+      const violatingFiles = new Set(
+        healValidation.issues
+          .filter((i) => i.severity === 'error' && protectedCodes.has(i.code))
+          .map((i) => {
+            const m = i.message.match(/^\[([^\]]+)\]/);
+            return m ? m[1] : null;
+          })
+          .filter(Boolean) as string[]
+      );
+      if (violatingFiles.size > 0) {
+        for (const filename of violatingFiles) {
+          const original = preHealFiles.get(filename);
+          if (original) merged.set(filename, original);
+        }
+        await emitEvent(hash, {
+          type: 'llm_log',
+          message: `[HEAL_GUARD] Reverted ${violatingFiles.size} file(s) — self-healer violated template integrity: ${[...violatingFiles].join(', ')}`,
+        });
+      }
       currentStepFiles = Array.from(merged.values());
 
-      // Write healed files back
+      // Write (possibly reverted) files back
       for (const f of currentStepFiles) {
         await fs.writeFile(path.join(artifactDir, 'steps', path.basename(f.filename)), f.content, 'utf-8');
       }

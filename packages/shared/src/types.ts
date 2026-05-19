@@ -61,6 +61,67 @@ export interface JobSummary {
   estimatedCostUSD: number;
 }
 
+// ─── PageModel — Structured observations from Explorer ────────────────────────
+
+export interface FormField {
+  label: string;
+  inputType: string;
+  selector: string;
+}
+
+export interface PageForm {
+  fields: FormField[];
+  submitLabel: string;
+  submitSelector: string;
+}
+
+export interface NavItem {
+  label: string;
+  url: string;
+  selector: string;
+}
+
+export interface PageElement {
+  label: string;
+  role: string;
+  selector: string;
+  selectorType: 'css' | 'aria' | 'text' | 'xpath';
+  description: string;
+}
+
+export interface PageModel {
+  url: string;
+  elements: PageElement[];
+  forms: PageForm[];
+  navigation: NavItem[];
+}
+
+// ─── IntentSpec — LLM JSON output schema ──────────────────────────────────────
+
+export interface IntentStep {
+  templateId: string;
+  params: Record<string, string>;
+  description: string;
+}
+
+export interface IntentScenario {
+  name: string;
+  steps: IntentStep[];
+}
+
+export interface IntentSpec {
+  version: string;
+  targetUrl: string;
+  scenarios: IntentScenario[];
+}
+
+// ─── Selector Registry — Validated Playwright locators ───────────────────────
+
+export type LocatorExpr = string;
+export type SelectorRegistry = Record<string, LocatorExpr>;
+
+// ─── Stream Events ────────────────────────────────────────────────────────────
+
 export interface StreamEventBase {
   id: number;
   ts: number;
@@ -76,3 +137,4 @@ export type StreamEvent = StreamEventBase & (
   | { type: 'complete'; resultUrl: string; summary: JobSummary }
   | { type: 'error'; message: string; retryable: boolean }
 );
+

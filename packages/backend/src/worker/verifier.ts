@@ -17,7 +17,7 @@ import fs from 'fs/promises';
 import type { JobState, StepResolutionResult, VerificationMode } from '../types';
 import { updateJobStatus } from '../redis';
 import { emitEvent } from './sse';
-import { buildOpenAIClient } from './generator';
+import { buildOpenAIClient, stripMarkdownJson } from './generator';
 
 export interface VerificationResult {
   passed: boolean;
@@ -135,27 +135,76 @@ async function spawnCucumber(hash: string, artifactDir: string, signal?: AbortSi
     const resultPath = `/tmp/cucumber-result-${hash}.json`;
     const proc = spawn(
       'pnpm',
-      ['exec', 'cucumber-js', '--format', `json:${resultPath}`],
+      ['exec', 'cucumber-js', '--format', `json:${resultPath}`, '--format', 'progress'],
       {
         cwd: artifactDir,
         env: process.env,
-        timeout: 300_000, // 5 min max per verification run
+        timeout: 300_000,
         signal,
       }
     );
 
     const output: string[] = [];
-    proc.stdout.on('data', (chunk: Buffer) => output.push(chunk.toString()));
-    proc.stderr.on('data', (chunk: Buffer) => output.push(chunk.toString()));
+    const emitLine = (chunk: Buffer) => {
+      const text = chunk.toString();
+      output.push(text);
+      const trimmed = text.trim();
+      if (trimmed) emitEvent(hash, { type: 'llm_log', message: `[cucumber] ${trimmed}` }).catch(() => undefined);
+    };
+    proc.stdout.on('data', emitLine);
+    proc.stderr.on('data', emitLine);
 
     proc.on('error', reject);
-    proc.on('close', (code) => {
+    proc.on('close', async (code) => {
       const passed = code === 0;
-      const errors = passed ? [] : output.filter((l) => l.includes('Error') || l.includes('failed'));
-      fs.unlink(resultPath).catch(() => undefined);
-      resolve({ passed, errors });
+      if (passed) {
+        await fs.unlink(resultPath).catch(() => undefined);
+        resolve({ passed: true, errors: [] });
+        return;
+      }
+
+      // Extract meaningful failure messages from the cucumber JSON report
+      const errors = await extractCucumberErrors(resultPath, output);
+      await fs.unlink(resultPath).catch(() => undefined);
+      resolve({ passed: false, errors });
     });
   });
+}
+
+type CucumberJson = Array<{
+  elements?: Array<{
+    name?: string;
+    steps?: Array<{
+      result?: { status: string; error_message?: string; duration?: number };
+      name?: string;
+    }>;
+  }>;
+}>;
+
+export async function extractCucumberErrors(resultPath: string, fallback: string[]): Promise<string[]> {
+  try {
+    const raw = await fs.readFile(resultPath, 'utf-8');
+    const report = JSON.parse(raw) as CucumberJson;
+    const errors: string[] = [];
+
+    for (const feature of report) {
+      for (const scenario of feature.elements ?? []) {
+        for (const step of scenario.steps ?? []) {
+          const result = step.result;
+          if (result && result.status !== 'passed' && result.status !== 'skipped') {
+            const scenarioName = scenario.name ?? 'unknown scenario';
+            const stepName = step.name ?? 'unknown step';
+            const msg = result.error_message ?? `Step "${stepName}" ${result.status}`;
+            errors.push(`Scenario: ${scenarioName}\n  Step: ${stepName}\n  ${msg}`);
+          }
+        }
+      }
+    }
+
+    return errors.length > 0 ? errors : fallback;
+  } catch {
+    return fallback;
+  }
 }
 
 // ─── Step Resolution Validator (PRD §6.6) ────────────────────────────────────
@@ -346,7 +395,7 @@ Return ALL provided files as a JSON object: { "files": [{ "filename": string, "c
 
   let parsed: { files?: Array<{ filename: string; content: string }> };
   try {
-    parsed = JSON.parse(raw);
+    parsed = JSON.parse(stripMarkdownJson(raw));
   } catch {
     throw new Error('Self-heal LLM returned invalid JSON');
   }

@@ -1,6 +1,8 @@
-import { BeforeAll, AfterAll, Before, After } from '@cucumber/cucumber';
+import { BeforeAll, AfterAll, Before, After, setDefaultTimeout } from '@cucumber/cucumber';
 import { chromium, Browser } from '@playwright/test';
 import type { CustomWorld } from './world';
+
+setDefaultTimeout(60_000);
 
 let browser: Browser;
 
@@ -14,6 +16,8 @@ AfterAll(async () => {
 
 Before(async function (this: CustomWorld) {
   this.context = await browser.newContext();
+  this.context.setDefaultTimeout(30000);
+  this.context.setDefaultNavigationTimeout(60000);
   this.page = await this.context.newPage();
   // Disable animations for test stability (PRD §3.6)
   await this.page.addStyleTag({

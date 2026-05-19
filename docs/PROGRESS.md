@@ -1,6 +1,6 @@
 # PickleScout — PRD Implementation Progress
 
-> Last updated: 2026-05-15 (session 2)
+> Last updated: 2026-05-19 (session 4)
 > Tracking completion against PRD.md v1.1
 
 Legend: ✅ Done · ⚠️ Partial · ❌ Not started
@@ -24,7 +24,7 @@ Legend: ✅ Done · ⚠️ Partial · ❌ Not started
 | §3.1 LLM providers — OpenAI, OpenRouter | ✅ | Fully supported in generator, verifier, self-healer |
 | §3.1 LLM providers — Anthropic, Gemini | ⚠️ | Stagehand exploration works; generator + self-healer throw (`provider not supported`) |
 | §3.1 LLM providers — Custom | ✅ | Passes through baseURL to OpenAI-compatible client |
-| §3.2 Generation flow (explore→pass1→pass2→verify→package) | ✅ | Full pipeline in `worker/index.ts` |
+| §3.2 Generation flow (explore→pass1→pass2→verify→package) | ✅ | Pass 2 now outputs IntentSpec JSON assembled via template catalog; full pipeline in `worker/index.ts` |
 | §3.3 Execution flow (CI/CD GitHub Actions yaml) | ✅ | Packager writes `.github/workflows/e2e.yml` |
 | §3.4 Self-healing scope (selector/timeout/wait/assertion only) | ✅ | System prompt enforces allowed changes; scope described in `verifier.ts` |
 | §3.5 Verification modes: `syntax-only`, `smoke`, `full` | ✅ | All three modes implemented; `full` retries once on flake |
@@ -49,7 +49,7 @@ Legend: ✅ Done · ⚠️ Partial · ❌ Not started
 | §4.4 SSE events: complete (resultUrl + JobSummary) | ✅ | Emitted by packager at end of successful job |
 | §4.4 SSE Last-Event-ID replay | ✅ | `stream.ts` subscribes before replaying; catches race conditions |
 | §4.5 Job state machine (queued→exploring→generating→verifying→self_healing→completed/failed) | ✅ | Full transitions in `worker/index.ts` |
-| §4.6 ActionLog schema | ✅ | `explorer.ts` persists full ActionLog to `action-logs/{hash}.json` |
+| §4.6 ActionLog schema | ✅ | `explorer.ts` persists full ActionLog; DOM text + role enriched via `getDomInfo()` at record time |
 
 ---
 
@@ -75,10 +75,13 @@ Legend: ✅ Done · ⚠️ Partial · ❌ Not started
 |------|--------|-------|
 | §6.1 File structure (features/, steps/, support/, configs, CI yml) | ✅ | Packager writes all files |
 | §6.4 Boilerplate: world.ts, hooks.ts, cucumber.js | ✅ | Embedded in packager |
-| §6.4 package.json exact-pinned (no ^/~) | ✅ | `@cucumber/cucumber: 11.0.0`, `@playwright/test: 1.50.0`, etc. |
+| §6.4 package.json exact-pinned (no ^/~) | ✅ | `@cucumber/cucumber: 11.0.0`, `@playwright/test: 1.60.0`, etc. |
 | §6.4 playwright.config.ts, tsconfig.json, .env.example, README.md | ✅ | All generated |
-| §6.5 LLM generation rules (step text, selector priority, assertion rules) | ✅ | System prompt in `generator.ts` Pass 1 + Pass 2 |
+| §6.5 LLM generation rules (step text, selector priority, assertion rules) | ✅ | Pass 1 prompt includes observed-element allowlist derived from DOM text; Pass 2 maps to template catalog |
 | §6.6 Step resolution validation | ✅ | `checkStepResolution()` before verification; `rerunPass2()` on failure |
+| Template catalog (10 atomic Playwright steps) | ✅ | `src/templates/steps/` — navigate, click_by_role, click_by_text, click_by_label, fill_by_label, select_option, wait_for_load, assert_visible, assert_not_visible, assert_url_contains |
+| Output validator (6 rules) | ✅ | `output-validator.ts` — MISSING_NAVIGATE, MISSING_ASSERTION, UNMATCHED_STEP, XPATH_IN_STEPS, TEMPLATE_MODIFIED, ROGUE_SET_TIMEOUT |
+| HEAL_GUARD post-heal integrity check | ✅ | Self-healer rewrites that violate template integrity are automatically reverted; emits `[HEAL_GUARD]` SSE log |
 | `@unhealed` tag on unverified scenarios | ⚠️ | Worker counts unhealed scenarios; packager receives the count but tag injection into .feature files not verified |
 | Output zip max size guard (10 MB) | ❌ | No size check after zip creation |
 | Screenshot max size (1920×1080, < 500 KB) | ❌ | Screenshots saved as-is; no resize/compress |
@@ -159,6 +162,11 @@ Legend: ✅ Done · ⚠️ Partial · ❌ Not started
 - [x] Full self-healing loop (scope-restricted)
 - [x] `full` verification mode
 - [x] Recent jobs + Download Anyway
+- [x] Template catalog + assembler (IntentSpec JSON → TypeScript via pre-written templates)
+- [x] Output validator (6 rules) + HEAL_GUARD (post-heal template integrity)
+- [x] Explorer DOM enrichment (real DOM text + role replaces Stagehand semantic descriptions)
+- [x] Timeout chain correct (Cucumber step 60s, Playwright action 30s, assertion 15s)
+- [x] targetUrl filtering for cross-page exploration (click-induced navigation tracked)
 - [ ] Rate limit exponential backoff (429)
 - [ ] Anthropic and Gemini in generator (currently throw)
 - [ ] Live token-usage display (TokenMeter UI component)

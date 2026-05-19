@@ -29,15 +29,12 @@ export async function resultRoutes(fastify: FastifyInstance): Promise<void> {
       return reply.status(409).send({ error: 'Job is not yet complete' });
     }
 
-    const preferred = unverified ? 'result_unverified.zip' : 'result.zip';
-    const fallback = unverified ? 'result.zip' : 'result_unverified.zip';
-
-    let zipPath = path.join(STORAGE_DIR, 'outputs', hash, preferred);
-    let isUnverified = unverified;
-    if (!fs.existsSync(zipPath)) {
-      zipPath = path.join(STORAGE_DIR, 'outputs', hash, fallback);
-      isUnverified = !unverified;
-    }
+    // The bare (verified) endpoint MUST NOT silently serve an unverified ZIP.
+    // Doing so would let the frontend's "Download ZIP" button on a stale UI hand
+    // out hallucinated tests. Unverified output requires explicit ?unverified=true.
+    const zipFilename = unverified ? 'result_unverified.zip' : 'result.zip';
+    const zipPath = path.join(STORAGE_DIR, 'outputs', hash, zipFilename);
+    const isUnverified = unverified;
 
     if (!fs.existsSync(zipPath)) {
       return reply.status(404).send({ error: 'Result file not found' });
