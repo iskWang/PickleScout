@@ -8,7 +8,8 @@ interface Props {
 }
 
 const PROVIDERS: { id: LLMProvider; label: string; disabled?: boolean }[] = [
-  { id: 'openai', label: 'OpenAI' },
+  // TODO: enable once openai e2e is validated (currently untested end-to-end)
+  { id: 'openai', label: 'OpenAI (coming soon)', disabled: true },
   { id: 'openrouter', label: 'OpenRouter' },
   // TODO: enable once generator supports native Anthropic SDK (currently throws)
   { id: 'anthropic', label: 'Anthropic (coming soon)', disabled: true },
@@ -17,18 +18,34 @@ const PROVIDERS: { id: LLMProvider; label: string; disabled?: boolean }[] = [
   { id: 'custom', label: 'Custom (OpenAI-compatible)' },
 ];
 
-const PROVIDER_MODELS: Record<LLMProvider, string[]> = {
-  openai: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-3.5-turbo'],
-  openrouter: [
-    'google/gemini-3.1-flash-lite-preview',
-    'anthropic/claude-haiku-4.5',
-    'anthropic/claude-sonnet-4-5',
-    'openai/gpt-4o',
-    'openai/gpt-4o-mini',
-    'google/gemini-2.5-flash',
+type ModelEntry = { id: string; disabled?: boolean };
+
+const PROVIDER_MODELS: Record<LLMProvider, ModelEntry[]> = {
+  openai: [
+    { id: 'gpt-4o', disabled: true },
+    { id: 'gpt-4o-mini', disabled: true },
+    { id: 'gpt-4-turbo', disabled: true },
+    { id: 'gpt-3.5-turbo', disabled: true },
   ],
-  anthropic: ['claude-haiku-4-5', 'claude-sonnet-4-5', 'claude-opus-4-5'],
-  gemini: ['gemini-2.0-flash-lite', 'gemini-2.5-flash', 'gemini-2.5-pro'],
+  openrouter: [
+    { id: 'google/gemini-3.1-flash-lite-preview' },
+    // TODO: validate end-to-end before enabling
+    { id: 'anthropic/claude-haiku-4.5', disabled: true },
+    { id: 'anthropic/claude-sonnet-4-5', disabled: true },
+    { id: 'openai/gpt-4o', disabled: true },
+    { id: 'openai/gpt-4o-mini', disabled: true },
+    { id: 'google/gemini-2.5-flash', disabled: true },
+  ],
+  anthropic: [
+    { id: 'claude-haiku-4-5', disabled: true },
+    { id: 'claude-sonnet-4-5', disabled: true },
+    { id: 'claude-opus-4-5', disabled: true },
+  ],
+  gemini: [
+    { id: 'gemini-2.0-flash-lite', disabled: true },
+    { id: 'gemini-2.5-flash', disabled: true },
+    { id: 'gemini-2.5-pro', disabled: true },
+  ],
   custom: [],
 };
 
@@ -37,10 +54,11 @@ export default function ProviderSelector({ value, onChange }: Props) {
 
   const handleProvider = (provider: LLMProvider) => {
     const models = PROVIDER_MODELS[provider];
+    const firstEnabled = models.find((m) => !m.disabled);
     onChange({
       ...value,
       provider,
-      model: models[0] ?? '',
+      model: firstEnabled?.id ?? '',
       baseURL: provider === 'openrouter' ? 'https://openrouter.ai/api/v1' : undefined,
     });
   };
@@ -80,7 +98,7 @@ export default function ProviderSelector({ value, onChange }: Props) {
               onChange={(e) => onChange({ ...value, model: e.target.value })}
             >
               {models.map((m) => (
-                <option key={m} value={m}>{m}</option>
+                <option key={m.id} value={m.id} disabled={m.disabled}>{m.id}</option>
               ))}
             </select>
           )}
