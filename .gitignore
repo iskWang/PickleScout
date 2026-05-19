@@ -38,3 +38,8 @@ storage/
 
 # AI review session artifacts
 .agents/review-findings.md
+
+# Demo video pipeline (not for version control)
+demo/
+Plans/
+.self-test-output/
