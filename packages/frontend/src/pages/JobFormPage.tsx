@@ -107,7 +107,7 @@ export default function JobFormPage() {
       <div className="container">
         {/* Brand */}
         <div className="brand">
-          <span className="brand-logo">🥒</span>
+          <img src="/logo.png" alt="PickleScout" className="brand-logo" />
           <div>
             <div className="brand-title">PickleScout</div>
             <div className="brand-subtitle">Sends a pickle into the wild. Returns with Gherkin specs.</div>

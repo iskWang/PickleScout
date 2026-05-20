@@ -1,7 +1,7 @@
 <div align="center">
-  <img src="packages/frontend/src/public/logo.png" alt="PickleScout logo" width="120" />
+  <img src="packages/frontend/public/logo.png" alt="PickleScout logo" width="120" />
   <br/>
-  <img src="packages/frontend/src/public/slogan.png" alt="PickleScout — Web Scraping & Data Navigation" width="420" />
+  <img src="packages/frontend/public/slogan.png" alt="PickleScout — Web Scraping & Data Navigation" width="420" />
 </div>
 
 # PickleScout

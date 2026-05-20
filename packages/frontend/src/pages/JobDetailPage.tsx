@@ -106,7 +106,7 @@ export default function JobDetailPage() {
       <div className="container">
         <div className="jd-header">
           <Link to="/" className="brand" style={{ textDecoration: 'none', marginBottom: 0 }}>
-            <span className="brand-logo">🥒</span>
+            <img src="/logo.png" alt="PickleScout" className="brand-logo" />
             <span className="brand-title">PickleScout</span>
           </Link>
           <button className="btn btn-ghost btn-sm" onClick={handleCopyUrl} id="copy-job-url">
