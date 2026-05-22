@@ -12,6 +12,10 @@
 
 [English README](README.md)
 
+<div align="center">
+  <video src="demo.mp4" controls width="720" title="PickleScout Demo — 瀏覽一次，測試永遠"></video>
+</div>
+
 ---
 
 ## 它做什麼
