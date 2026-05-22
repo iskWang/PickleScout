@@ -13,7 +13,10 @@
 [中文版 README](README.zh-TW.md)
 
 <div align="center">
-  <video src="https://github.com/iskWang/PickleScout/raw/refs/heads/main/demo.mp4" controls width="720" title="PickleScout Demo — browse once, test forever"></video>
+  <h3>▶ Watch the Demo on YouTube</h3>
+  <a href="https://youtu.be/Ozh5xPTJ2jk">
+    <img src="https://img.youtube.com/vi/Ozh5xPTJ2jk/maxresdefault.jpg" alt="PickleScout Demo — browse once, test forever" width="720" />
+  </a>
 </div>
 
 ---
