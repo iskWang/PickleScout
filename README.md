@@ -380,6 +380,22 @@ docs/        # PRD, progress log, LLM provider notes
 
 ---
 
+## Known Limitations
+
+- **Only tested with OpenRouter + Gemini Flash** — `google/gemini-3.1-flash-lite-preview` is the primary tested model. Other providers and models may work but are untested.
+- **OpenAI / Anthropic / Google Gemini direct API** — UI shows these as "coming soon"; only OpenRouter and custom OpenAI-compatible endpoints are currently functional.
+- **Verification on auth-protected sites** — `smoke` and `full` verification modes require the target app to be publicly accessible. For sites behind login, use `syntax-only` mode to skip test execution.
+- **Chromium only** — Stagehand exploration runs on Chromium. Firefox and WebKit are not supported.
+- **Self-healing is best-effort** — The LLM may not be able to repair all selector/timeout failures. Download the partial output via "Download Anyway" and fix manually if needed.
+
+---
+
+## References
+
+- [Get an OpenRouter API key](https://openrouter.ai/keys) — required to run PickleScout with the default provider
+
+---
+
 ## License
 
 MIT

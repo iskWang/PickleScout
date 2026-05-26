@@ -257,6 +257,22 @@ docs/        # PRD、進度日誌、LLM provider 說明
 
 ---
 
+## 已知限制
+
+- **僅測試 OpenRouter + Gemini Flash** — 主要驗證模型為 `google/gemini-3.1-flash-lite-preview`，其他 provider 與模型或許可用，但尚未測試。
+- **OpenAI / Anthropic / Google Gemini 直接 API** — UI 顯示為「coming soon」，目前僅 OpenRouter 及自訂 OpenAI 相容端點可用。
+- **需要登入的目標網站** — `smoke` 與 `full` 驗證模式需要目標應用可公開存取。若目標站需要登入，請改用 `syntax-only` 模式跳過測試執行。
+- **僅支援 Chromium** — Stagehand 探索固定使用 Chromium，不支援 Firefox 與 WebKit。
+- **自我修復為盡力而為** — LLM 不保證能修復所有 selector／timeout 錯誤，可透過「Download Anyway」下載部分產出後手動修正。
+
+---
+
+## 參考資源
+
+- [申請 OpenRouter API Key](https://openrouter.ai/keys) — 使用預設 provider 執行 PickleScout 的必要條件
+
+---
+
 ## License
 
 MIT
