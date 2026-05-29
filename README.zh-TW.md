@@ -13,7 +13,7 @@
 [English README](README.md)
 
 <div align="center">
-  <video src="https://github.com/iskWang/PickleScout/releases/download/demo-v1/demo.mp4" width="900" controls muted></video>
+  <video src="https://github.com/user-attachments/assets/3ad001a5-7c62-4b8c-8035-aa41747686c5" width="900" controls muted></video>
 </div>
 
 ---
