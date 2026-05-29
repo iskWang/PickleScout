@@ -12,6 +12,10 @@
 
 [English README](README.md)
 
+<div align="center">
+  <video src="https://github.com/iskWang/PickleScout/releases/download/demo-v1/demo.mp4" width="900" controls muted></video>
+</div>
+
 ---
 
 ## 它做什麼
