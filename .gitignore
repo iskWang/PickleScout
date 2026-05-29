@@ -45,3 +45,7 @@ demo/
 
 # Claude Code local session state
 .claude/
+
+# Demo video (hosted on GitHub CDN)
+demo.mp4
+docs/demo.mp4
