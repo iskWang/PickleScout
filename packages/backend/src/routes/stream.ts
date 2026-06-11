@@ -15,10 +15,9 @@ import {
   getSseEvents,
   getSseSubscriber,
   sseChannelForJob,
+  TERMINAL_STATUSES,
 } from '../redis';
 import type { StreamEvent } from '../types';
-
-const TERMINAL_STATUSES = new Set(['completed', 'failed']);
 
 export async function streamRoutes(fastify: FastifyInstance): Promise<void> {
   fastify.get<{ Params: { hash: string } }>(

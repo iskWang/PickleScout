@@ -11,6 +11,9 @@ import {
   setJobState,
   getJobState,
   updateJobStatus,
+  TERMINAL_STATUSES,
+  ORPHAN_THRESHOLD_MS,
+  ORPHAN_ERROR,
 } from '../redis';
 import { emitEvent } from '../worker/sse';
 import type {
@@ -59,12 +62,6 @@ const CreateJobSchema = z.object({
   llm: LLMConfigSchema,
   options: JobOptionsSchema.optional().default(DEFAULT_JOB_OPTIONS),
 });
-
-const TERMINAL_STATUSES     = new Set(['completed', 'failed']);
-// Cross-check against BullMQ only if the job hasn't progressed in 5 min.
-// Grace period avoids a false-positive race where BullMQ removes a completed
-// job (removeOnComplete:true) before Redis reflects the final status.
-const ORPHAN_THRESHOLD_MS   = 5 * 60_000;
 
 // ─── Plugin ───────────────────────────────────────────────────────────────────
 
@@ -143,10 +140,7 @@ export async function jobRoutes(fastify: FastifyInstance): Promise<void> {
       const bullJob = await generationQueue.getJob(hash);
       if (!bullJob) {
         fastify.log.warn(safeLog({ msg: 'GET cross-check: BullMQ job missing for non-terminal Redis state, repairing', hash, status: state.status }));
-        state = (await updateJobStatus(hash, {
-          status: 'failed',
-          error: 'Job queue entry lost unexpectedly — please retry.',
-        })) ?? state;
+        state = (await updateJobStatus(hash, { status: 'failed', error: ORPHAN_ERROR })) ?? state;
       }
     }
 
