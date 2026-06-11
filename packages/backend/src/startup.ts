@@ -9,11 +9,10 @@
 
 import path from 'path';
 import fs from 'fs/promises';
-import { getRedisClient, getJobState, updateJobStatus } from './redis';
+import { getRedisClient, getJobState, updateJobStatus, TERMINAL_STATUSES } from './redis';
 import { safeLog } from './utils/safeLog';
 
 const STORAGE_DIR = process.env.STORAGE_DIR ?? '/storage';
-const TERMINAL_STATUSES = new Set(['completed', 'failed']);
 
 export async function runStartupTasks(): Promise<void> {
   // eslint-disable-next-line no-console

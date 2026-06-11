@@ -8,8 +8,9 @@ import { jobRoutes } from './routes/jobs';
 import { streamRoutes } from './routes/stream';
 import { resultRoutes } from './routes/result';
 import { screenshotRoutes } from './routes/screenshots';
-import { startWorker } from './worker';
+import { startWorker, generationQueue } from './worker';
 import { runStartupTasks } from './startup';
+import { startReconciler } from './reconciler';
 
 const PORT = parseInt(process.env.PORT ?? '3000', 10);
 const LOG_LEVEL = process.env.LOG_LEVEL ?? 'info';
@@ -46,6 +47,9 @@ async function main(): Promise<void> {
 
   // Start BullMQ worker
   startWorker();
+
+  // Start runtime reconciler — repairs BullMQ/Redis drift every 60 s
+  startReconciler(generationQueue);
 
   // Start server
   await fastify.listen({ port: PORT, host: '0.0.0.0' });

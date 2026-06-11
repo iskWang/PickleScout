@@ -42,6 +42,12 @@ export function getBullRedisClient(): Redis {
   return _bullClient;
 }
 
+// ─── Shared Constants ─────────────────────────────────────────────────────────
+
+export const TERMINAL_STATUSES  = new Set(['completed', 'failed']);
+export const ORPHAN_THRESHOLD_MS = 5 * 60_000;
+export const ORPHAN_ERROR        = 'Job queue entry lost unexpectedly — please retry.';
+
 // ─── Job State ────────────────────────────────────────────────────────────────
 
 export async function setJobState(state: JobState): Promise<void> {
