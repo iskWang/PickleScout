@@ -482,6 +482,7 @@ Example job state:
 - HTTPS terminates at a reverse proxy (out of scope to specify) before reaching the backend
 - Sensitive fields are never written to logs (see Log Redaction §8.3) and never appear in SSE events or error messages
 - On backend startup, all non-terminal jobs are marked `failed` to prevent orphan jobs holding stale credentials
+- A runtime reconciler runs every 60 s and marks any non-terminal job `failed` if its BullMQ entry has disappeared (see §8.1)
 
 ---
 
@@ -934,7 +935,8 @@ interface RecentJob {
 | Verification | Exceeds `maxRetries` | job → `failed`, unverified output preserved | ❌ | "Tests could not be verified. You can still download." |
 | Infra | Redis connection failure | HTTP 503 | ❌ | "Service temporarily unavailable." |
 | Infra | Disk full | job → `failed` | ❌ | "Storage error. Contact administrator." |
-| Infra | Process crash / restart | orphan jobs → `failed` | ❌ | "Service restarted. Please retry your job." |
+| Infra | Process crash / restart | orphan jobs → `failed` on next startup | ❌ | "Service restarted. Please retry your job." |
+| Infra | BullMQ job lost at runtime (eviction, manual flush) | reconciler marks job `failed` within 60 s; `GET /api/jobs/:hash` repairs immediately for stale jobs | ❌ | "Job queue entry lost unexpectedly — please retry." |
 
 ### 8.2 SSE Reconnection
 
