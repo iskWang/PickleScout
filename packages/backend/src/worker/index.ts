@@ -266,8 +266,9 @@ async function failJob(hash: string, message: string): Promise<void> {
       retryable: false,
     });
     await emitEvent(hash, { type: 'status', status: 'failed' });
-  } catch {
-    // Best-effort — don't throw from error handler
+  } catch (err) {
+    // Best-effort — don't throw from error handler, but surface for ops visibility
+    console.error(safeLog({ msg: 'failJob could not persist failure state', hash, error: err instanceof Error ? err.message : String(err) }));
   }
 }
 

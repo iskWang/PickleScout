@@ -11,7 +11,6 @@ import {
   setJobState,
   getJobState,
   updateJobStatus,
-  deleteJobState,
 } from '../redis';
 import { emitEvent } from '../worker/sse';
 import type {
@@ -60,6 +59,12 @@ const CreateJobSchema = z.object({
   llm: LLMConfigSchema,
   options: JobOptionsSchema.optional().default(DEFAULT_JOB_OPTIONS),
 });
+
+const TERMINAL_STATUSES     = new Set(['completed', 'failed']);
+// Cross-check against BullMQ only if the job hasn't progressed in 5 min.
+// Grace period avoids a false-positive race where BullMQ removes a completed
+// job (removeOnComplete:true) before Redis reflects the final status.
+const ORPHAN_THRESHOLD_MS   = 5 * 60_000;
 
 // ─── Plugin ───────────────────────────────────────────────────────────────────
 
@@ -126,10 +131,25 @@ export async function jobRoutes(fastify: FastifyInstance): Promise<void> {
    */
   fastify.get<{ Params: { hash: string } }>('/api/jobs/:hash', async (request, reply) => {
     const { hash } = request.params;
-    const state = await getJobState(hash);
+    let state = await getJobState(hash);
     if (!state) {
       return reply.status(404).send({ error: 'Job not found or expired' });
     }
+
+    // Cross-check: if non-terminal and stale, verify BullMQ still has the job.
+    // Catches the case where a BullMQ job disappears at runtime without a restart
+    // (Redis eviction of bull:* keys, manual queue flush, etc.).
+    if (!TERMINAL_STATUSES.has(state.status) && Date.now() - state.updatedAt > ORPHAN_THRESHOLD_MS) {
+      const bullJob = await generationQueue.getJob(hash);
+      if (!bullJob) {
+        fastify.log.warn(safeLog({ msg: 'GET cross-check: BullMQ job missing for non-terminal Redis state, repairing', hash, status: state.status }));
+        state = (await updateJobStatus(hash, {
+          status: 'failed',
+          error: 'Job queue entry lost unexpectedly — please retry.',
+        })) ?? state;
+      }
+    }
+
     // Never expose credentials in the response
     const { llm, auth: _auth, ...safeState } = state;
     return reply.send({
@@ -161,7 +181,10 @@ export async function jobRoutes(fastify: FastifyInstance): Promise<void> {
     await emitEvent(hash, { type: 'error', message: 'Cancelled by user', retryable: false });
     await emitEvent(hash, { type: 'status', status: 'failed' });
 
-    await deleteJobState(hash);
+    // Do NOT delete the Redis state here. If the job is still active in BullMQ
+    // it will drain cooperatively (explorer checks status === 'failed'), then the
+    // worker's failJob call will find the state intact and succeed cleanly.
+    // The 7-day TTL on job:{hash} handles eventual cleanup.
     fastify.log.info(safeLog({ msg: 'Job cancelled', hash }));
 
     return reply.status(204).send();
