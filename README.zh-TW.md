@@ -179,7 +179,8 @@ cd PickleScout
 docker compose up
 ```
 
-開啟 [http://localhost:5173](http://localhost:5173)。
+開啟 [http://localhost:5175](http://localhost:5175)。
+後端 API 預設發佈在 [http://localhost:3100](http://localhost:3100)。如要更換主機 port，請在啟動 Compose 前於 `.env` 設定 `FRONTEND_PORT` 和／或 `BACKEND_PORT`（例如 `BACKEND_PORT=4100 FRONTEND_PORT=5176 docker compose up`）；容器內仍使用 3000 和 5173。
 
 ### 執行生成的測試
 

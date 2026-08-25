@@ -254,9 +254,7 @@ generated-tests/
 │   ├── 01_login_flow.feature
 │   └── 02_sales_order.feature
 ├── steps/
-│   ├── common.steps.ts        ← shared navigation + login steps
-│   ├── 01_login_flow.steps.ts
-│   └── 02_sales_order.steps.ts
+│   └── steps.ts              ← TypeScript step definitions
 ├── support/
 │   ├── world.ts               ← Cucumber World (Playwright page context)
 │   └── hooks.ts               ← Before/After browser lifecycle
@@ -286,7 +284,8 @@ cd picklescout
 docker compose up
 ```
 
-Open [http://localhost:5173](http://localhost:5173).
+Open [http://localhost:5175](http://localhost:5175).
+The backend API is published at [http://localhost:3100](http://localhost:3100) by default. To use different host ports, set `FRONTEND_PORT` and/or `BACKEND_PORT` in `.env` before starting Compose (for example, `BACKEND_PORT=4100 FRONTEND_PORT=5176 docker compose up`); containers still listen on ports 3000 and 5173.
 
 ### Run the generated tests
 
