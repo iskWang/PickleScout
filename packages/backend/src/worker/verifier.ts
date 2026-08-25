@@ -212,7 +212,7 @@ export async function extractCucumberErrors(resultPath: string, fallback: string
 const STEP_KEYWORDS = ['Given', 'When', 'Then', 'And', 'But'] as const;
 
 const CUCUMBER_PARAM_MAP: Record<string, string> = {
-  string: '(?:"[^"]*"|\'[^\']*\')',
+  string: `(?:"(?:[^"\\\\]|\\\\.)*"|'(?:[^'\\\\]|\\\\.)*')`,
   int: '-?\\d+',
   float: '-?\\d+\\.?\\d*',
   word: '\\S+',

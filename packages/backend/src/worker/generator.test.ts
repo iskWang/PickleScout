@@ -1,7 +1,30 @@
 import { describe, it, expect } from 'vitest';
-import { extractStepPatterns, dedupeStepFile, extractRequiredStepCoverage, STEP_SHARED_RULES, stripMarkdownJson, formatActionLogEntry, extractObservedElements } from './generator';
+import { extractStepPatterns, dedupeStepFile, extractRequiredStepCoverage, STEP_SHARED_RULES, stripMarkdownJson, formatActionLogEntry, extractObservedElements, limitIntentSpecScenarios } from './generator';
 
 const IMPORTS = `import { Given, When, Then } from '@cucumber/cucumber';\nimport { page } from '../support/world';\n\n`;
+
+describe('limitIntentSpecScenarios', () => {
+  it('limits seven scenarios to the configured maximum without mutating the input', () => {
+    const intentSpec = {
+      version: '1.0.0',
+      targetUrl: 'https://example.com',
+      scenarios: Array.from({ length: 7 }, (_, index) => ({
+        name: `scenario-${index + 1}`,
+        steps: [],
+      })),
+    };
+
+    const limited = limitIntentSpecScenarios(intentSpec, 3);
+
+    expect(limited.scenarios).toHaveLength(3);
+    expect(limited.scenarios.map((scenario) => scenario.name)).toEqual([
+      'scenario-1',
+      'scenario-2',
+      'scenario-3',
+    ]);
+    expect(intentSpec.scenarios).toHaveLength(7);
+  });
+});
 
 // ─── extractStepPatterns ──────────────────────────────────────────────────────
 

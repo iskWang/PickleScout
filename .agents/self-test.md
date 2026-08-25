@@ -43,7 +43,7 @@ Outputs land in `.self-test-output/`:
 **smoke mode** — pipeline plumbing check, all three must be true:
 1. Final status reached terminal (`completed` or `failed`)
 2. Zip downloaded successfully (HTTP 200 on `/api/jobs/:hash/result`)
-3. Zip contains the expected file tree: `features/*.feature`, `steps/*.steps.ts`, `support/world.ts` + `hooks.ts`, `package.json`
+3. Zip contains the expected file tree: `features/*.feature`, `steps/*.ts` (for example `steps/steps.ts`), `support/world.ts` + `hooks.ts`, `package.json`
 
 `hallucinationRisk` is REPORTED in smoke output but NOT asserted. Smoke targets external sites; if Stagehand's LLM is weak (e.g. gemini-flash-lite) it may not extract interactive elements even on rich pages. That's an exploration-quality issue separate from pipeline plumbing.
 
@@ -61,7 +61,7 @@ The script prints `✅ PASS` or `❌ FAIL (N assertion(s) failed)` and exits 0/1
 | `ENOENT: ... dist/templates/*.template` | tsc didn't copy templates | `packages/backend/package.json` build script |
 | `pnpm install failed (exit 1): ERR_PNPM_NO_MATCHING_VERSION` | Pinned version doesn't exist on npm | `packages/backend/src/worker/packager.ts` `PINNED_PACKAGE_JSON` |
 | `browserType.launch: Executable doesn't exist` | `PLAYWRIGHT_BROWSERS_PATH` override pointing to empty dir | `packages/backend/src/worker/verifier.ts` spawn env |
-| `ENOENT: ... steps/features/step_definitions/*.ts` | LLM returned a filename with sub-path; writer didn't `path.basename` | `packages/backend/src/worker/index.ts` self-heal write loop |
+| `ENOENT: ... steps/*.ts` | LLM returned a filename with sub-path; writer didn't `path.basename` | `packages/backend/src/worker/index.ts` self-heal write loop |
 | `Result file not found` on download | Route handler didn't fallback between `result.zip` ↔ `result_unverified.zip` | `packages/backend/src/routes/result.ts` |
 | `Step resolution failed after Pass 2 retry: Ambiguous` | Same step pattern declared in both `common.steps.ts` and a feature-specific file | `packages/backend/src/worker/generator.ts` — Pass 2 is split into 2a (common) + 2b (feature-specific given actual common content); if still failing, check 2b prompt |
 | `Step resolution failed after Pass 2 retry: Unresolved` | Pass 2 generates step patterns that don't match Pass 1 step texts (wrong word: "button" vs "link", reversed word order, different phrasing) | `packages/backend/src/worker/generator.ts` — `extractRequiredStepCoverage` derives required patterns from feature files; Pass 2b prompt includes them as must-implement list; `injectMissingStubs` adds pending stubs as final safety net |

@@ -1,4 +1,6 @@
 import { vi, describe, it, expect, beforeEach } from 'vitest';
+import fs from 'fs/promises';
+import os from 'os';
 import path from 'path';
 
 // Mock side-effecting modules before importing the module under test
@@ -9,7 +11,7 @@ vi.mock('./generator', async (importOriginal) => {
   return { ...actual, buildOpenAIClient: vi.fn() };
 });
 
-import { extractCucumberErrors, attemptSelfHeal } from './verifier';
+import { checkStepResolution, extractCucumberErrors, attemptSelfHeal } from './verifier';
 import { buildOpenAIClient } from './generator';
 import type { JobState } from '../types';
 
@@ -90,6 +92,32 @@ describe('extractCucumberErrors', () => {
     const fallback = ['raw stderr'];
     const errors = await extractCucumberErrors(path.join(FIXTURES, 'cucumber-result-invalid.json'), fallback);
     expect(errors).toEqual(fallback);
+  });
+});
+
+describe('checkStepResolution — escaped string parameters', () => {
+  it('matches a Cucumber string containing both quote styles', async () => {
+    const artifactDir = await fs.mkdtemp(path.join(os.tmpdir(), 'picklescout-resolution-'));
+    await fs.mkdir(path.join(artifactDir, 'features'));
+    await fs.mkdir(path.join(artifactDir, 'steps'));
+    await fs.writeFile(
+      path.join(artifactDir, 'features', 'quoted.feature'),
+      `Feature: Quoted text
+
+  Scenario: Quoted text
+    Then I should see "Bob's \\"quoted\\" text"
+`,
+    );
+    await fs.writeFile(
+      path.join(artifactDir, 'steps', 'steps.ts'),
+      `Then('I should see {string}', async function (text: string) {})`,
+    );
+
+    try {
+      await expect(checkStepResolution(artifactDir)).resolves.toEqual([]);
+    } finally {
+      await fs.rm(artifactDir, { recursive: true, force: true });
+    }
   });
 });
 

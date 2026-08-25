@@ -157,7 +157,7 @@ ZIP_HAS_EXPECTED=0
 if [ "$ZIP_OK" = "1" ]; then
   ZIP_LISTING=$(unzip -l "$ZIP_PATH" 2>/dev/null || true)
   if echo "$ZIP_LISTING" | grep -qE 'features/.*\.feature' \
-     && echo "$ZIP_LISTING" | grep -qE 'steps/.*\.steps\.ts' \
+     && echo "$ZIP_LISTING" | grep -qE 'steps/.*\.ts' \
      && echo "$ZIP_LISTING" | grep -qE 'support/(world|hooks)\.ts' \
      && echo "$ZIP_LISTING" | grep -q 'package.json'; then
     ZIP_HAS_EXPECTED=1

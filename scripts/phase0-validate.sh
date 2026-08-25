@@ -16,6 +16,7 @@ set -euo pipefail
 API_BASE="${API_BASE:-http://localhost:3000}"
 TARGET_URL="${TARGET_URL:-https://demo.odoo.com}"
 MAX_WAIT_SEC="${MAX_WAIT_SEC:-1200}"
+MAX_SCENARIOS="${MAX_SCENARIOS:-3}"
 OUT_ZIP="/tmp/phase0-out.zip"
 OUT_DIR="/tmp/phase0-out"
 
@@ -39,7 +40,7 @@ RESPONSE=$(curl -sf -X POST "$API_BASE/api/jobs" \
       \"baseURL\": \"https://openrouter.ai/api/v1\"
     },
     \"options\": {
-      \"maxScenarios\": 3,
+      \"maxScenarios\": $MAX_SCENARIOS,
       \"maxSteps\": 15,
       \"verificationMode\": \"syntax-only\"
     }
@@ -107,8 +108,16 @@ if [ "$FEATURE_COUNT" -eq 0 ]; then
 fi
 echo "[phase0] found $FEATURE_COUNT .feature file(s)"
 
+# Scenario count must respect the same limit used by the generator.
+SCENARIO_COUNT=$(find "$OUT_DIR" -type f -name '*.feature' -exec awk '/^[[:space:]]*Scenario( Outline)?:/ { count++ } END { print count + 0 }' {} + | awk '{ total += $1 } END { print total + 0 }')
+if [ "$SCENARIO_COUNT" -gt "$MAX_SCENARIOS" ]; then
+  echo "[phase0] assertion failed: $SCENARIO_COUNT scenarios found; maximum is $MAX_SCENARIOS" >&2
+  exit 1
+fi
+echo "[phase0] assertion passed: $SCENARIO_COUNT scenario(s) <= MAX_SCENARIOS=$MAX_SCENARIOS"
+
 # steps/ must be non-empty
-STEP_COUNT=$(find "$OUT_DIR" -name "*.steps.ts" -o -name "*.steps.js" | wc -l | tr -d ' ')
+STEP_COUNT=$(find "$OUT_DIR/steps" -type f \( -name "*.ts" -o -name "*.js" \) 2>/dev/null | wc -l | tr -d ' ')
 if [ "$STEP_COUNT" -eq 0 ]; then
   echo "[phase0] FAIL: no step definition files found in artifact" >&2
   find "$OUT_DIR" -type f >&2

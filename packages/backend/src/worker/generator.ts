@@ -424,6 +424,18 @@ export function extractRequiredStepCoverage(
 
   return required;
 }
+/**
+ * Return an IntentSpec with at most maxScenarios scenarios.
+ *
+ * The LLM result is treated as immutable so callers can safely retain it.
+ */
+export function limitIntentSpecScenarios(intentSpec: IntentSpec, maxScenarios: number): IntentSpec {
+  return {
+    ...intentSpec,
+    scenarios: intentSpec.scenarios.slice(0, Math.max(0, maxScenarios)),
+  };
+}
+
 
 // ─── Main Generator ───────────────────────────────────────────────────────────
 
@@ -480,6 +492,8 @@ export async function runGenerator(
     await emitEvent(hash, { type: 'llm_log', message: 'LLM output parse error, retrying Pass 2…' });
     intentSpec = await pass2GenerateIntentSpec(state, actionLog, featureFiles, client, signal);
   }
+  intentSpec = limitIntentSpecScenarios(intentSpec, state.options.maxScenarios);
+
 
   const pageModel = buildPageModel(actionLog.entries);
   buildSelectorRegistry(pageModel); // validates; registry persisted for debugging
@@ -536,7 +550,7 @@ export async function rerunPass2(
   actionLog: ActionLog,
   featureFiles: Array<{ filename: string; content: string }>,
   signal?: AbortSignal
-): Promise<Array<{ filename: string; content: string }>> {
+): Promise<GeneratedArtifact> {
   const { hash } = state;
   const client = buildOpenAIClient(state.llm);
 
@@ -552,23 +566,41 @@ export async function rerunPass2(
     await emitEvent(hash, { type: 'llm_log', message: 'LLM output parse error, retrying Pass 2…' });
     intentSpec = await pass2GenerateIntentSpec(state, actionLog, featureFiles, client, signal);
   }
+  intentSpec = limitIntentSpecScenarios(intentSpec, state.options.maxScenarios);
 
+  const assembledFeatureFiles = assembleFeatureFiles(intentSpec, TEMPLATE_CATALOG);
   const { files: stepFiles } = assembleStepFiles(intentSpec, TEMPLATE_CATALOG);
 
   const genDir = path.join(STORAGE_DIR, 'generated', hash);
   await fs.writeFile(path.join(genDir, 'intent-spec.json'), JSON.stringify(intentSpec, null, 2), 'utf-8');
-  for (const s of stepFiles) {
-    await fs.writeFile(path.join(genDir, 'steps', path.basename(s.filename)), s.content, 'utf-8');
+  for (const feature of assembledFeatureFiles) {
+    await fs.writeFile(
+      path.join(genDir, 'features', path.basename(feature.filename)),
+      feature.content,
+      'utf-8',
+    );
+  }
+  for (const step of stepFiles) {
+    await fs.writeFile(
+      path.join(genDir, 'steps', path.basename(step.filename)),
+      step.content,
+      'utf-8',
+    );
   }
 
   // eslint-disable-next-line no-console
-  console.log(safeLog({ msg: 'Pass 2 retry complete', hash, stepFileCount: stepFiles.length }));
+  console.log(safeLog({
+    msg: 'Pass 2 retry complete',
+    hash,
+    featureFileCount: assembledFeatureFiles.length,
+    stepFileCount: stepFiles.length,
+  }));
   await emitEvent(hash, {
     type: 'llm_log',
-    message: `Pass 2 retry complete: ${stepFiles.length} step file(s) reassembled`,
+    message: `Pass 2 retry complete: ${assembledFeatureFiles.length} feature file(s) and ${stepFiles.length} step file(s) reassembled`,
   });
 
-  return stepFiles;
+  return { featureFiles: assembledFeatureFiles, stepFiles };
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

@@ -6,11 +6,19 @@ export interface AssembleResult {
   unimplementedTemplates: string[];
 }
 
+function quoteCucumberString(value: string): string {
+  const quote = value.includes('"') && !value.includes("'") ? "'" : '"';
+  const escaped = value
+    .replace(/\\/g, '\\\\')
+    .replace(new RegExp(quote, 'g'), `\\${quote}`);
+  return `${quote}${escaped}${quote}`;
+}
+
 function fillStepPattern(template: Template, params: Record<string, string>): string {
   let pattern = template.stepPattern;
   for (const paramName of template.requiredParams) {
     const value = params[paramName] ?? '';
-    pattern = pattern.replace('{string}', `"${value}"`);
+    pattern = pattern.replace('{string}', () => quoteCucumberString(value));
   }
   return pattern;
 }

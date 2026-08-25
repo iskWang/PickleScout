@@ -112,6 +112,28 @@ describe('assembleFeatureFiles', () => {
     expect(features[0].content).toContain('"Welcome"');
   });
 
+  it('preserves quotes and dollar replacement tokens in string parameters', () => {
+    const spec: IntentSpec = {
+      ...MINIMAL_SPEC,
+      scenarios: [
+        {
+          name: 'Quoted text',
+          steps: [
+            {
+              templateId: 'assert_visible',
+              params: { text: 'He said "hi" and $&' },
+              description: 'check quoted text',
+            },
+          ],
+        },
+      ],
+    };
+
+    const features = assembleFeatureFiles(spec, TEMPLATE_CATALOG);
+
+    expect(features[0].content).toContain(`Then I should see 'He said "hi" and $&'`);
+  });
+
   it('uses the correct gherkin verb from the template', () => {
     const features = assembleFeatureFiles(MINIMAL_SPEC, TEMPLATE_CATALOG);
     expect(features[0].content).toContain('Given I navigate to');
