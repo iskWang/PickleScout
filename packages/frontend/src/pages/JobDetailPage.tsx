@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useJobStream, TERMINAL_STATUSES } from '../hooks/useJobStream';
 import JobStatusBar from '../components/JobStatusBar';
@@ -8,6 +8,7 @@ import FeaturePreview from '../components/FeaturePreview';
 import UnverifiedDownloadModal from '../components/UnverifiedDownloadModal';
 import { saveRecentJob, removeRecentJob } from '../components/RecentJobs';
 import { API_BASE } from '../lib/api';
+import type { JobStatus } from '../types';
 import './JobDetailPage.css';
 
 interface HallucinationState {
@@ -20,34 +21,56 @@ export default function JobDetailPage() {
   const navigate = useNavigate();
   const stream = useJobStream(hash ?? '');
   const [url, setUrl] = useState<string>('');
+  const [fetchedStatus, setFetchedStatus] = useState<JobStatus | null>(null);
+  const [fetchedError, setFetchedError] = useState<string | null>(null);
+  const [notFound, setNotFound] = useState(false);
   const [showUnverifiedModal, setShowUnverifiedModal] = useState(false);
   const [hallucination, setHallucination] = useState<HallucinationState>({ risk: false, reason: '' });
   const terminalFetchedRef = useRef(false);
 
-  const applyJobData = (data: { url?: string; hallucinationRisk?: boolean; hallucinationReason?: string }) => {
+  const applyJobData = useCallback((data: {
+    url?: string;
+    status?: JobStatus;
+    error?: string;
+    hallucinationRisk?: boolean;
+    hallucinationReason?: string;
+  }) => {
     if (data.url) setUrl(data.url);
+    if (data.status) setFetchedStatus(data.status);
+    if (data.error) setFetchedError(data.error);
     if (data.hallucinationRisk || data.hallucinationReason) {
       setHallucination({ risk: !!data.hallucinationRisk, reason: data.hallucinationReason ?? '' });
     }
-  };
+  }, []);
+
+  const fetchJobData = useCallback((jobHash: string) => {
+    fetch(`${API_BASE}/api/jobs/${jobHash}`)
+      .then(async (r) => {
+        if (r.status === 404) {
+          setNotFound(true);
+          return null;
+        }
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json();
+      })
+      .then((data) => {
+        if (data) applyJobData(data);
+      })
+      .catch(() => {});
+  }, [applyJobData]);
 
   useEffect(() => {
     if (!hash) return;
-    fetch(`${API_BASE}/api/jobs/${hash}`)
-      .then((r) => r.json())
-      .then(applyJobData)
-      .catch(() => {});
-  }, [hash]);
+    setNotFound(false);
+    fetchJobData(hash);
+  }, [fetchJobData, hash]);
 
   useEffect(() => {
     if (!hash || !stream.status || !TERMINAL_STATUSES.has(stream.status)) return;
     if (terminalFetchedRef.current) return;
     terminalFetchedRef.current = true;
-    fetch(`${API_BASE}/api/jobs/${hash}`)
-      .then((r) => r.json())
-      .then(applyJobData)
-      .catch(() => {});
-  }, [hash, stream.status]);
+    fetchJobData(hash);
+  }, [fetchJobData, hash, stream.status]);
 
   useEffect(() => {
     if (!hash || !url || !stream.status) return;
@@ -95,11 +118,26 @@ export default function JobDetailPage() {
       </div>
     );
   }
+  if (notFound) {
+    return (
+      <div className="page">
+        <div className="container">
+          <div className="notice notice-error">Job not found or expired</div>
+          <Link to="/" className="btn btn-secondary mt-4">← Back</Link>
+        </div>
+      </div>
+    );
+  }
 
+  const status = stream.status && TERMINAL_STATUSES.has(stream.status)
+    ? stream.status
+    : (fetchedStatus && TERMINAL_STATUSES.has(fetchedStatus) ? fetchedStatus : (stream.status ?? fetchedStatus));
+  const error = stream.error ?? fetchedError;
   const currentStep = stream.steps.length > 0 ? stream.steps[stream.steps.length - 1].stepNumber : 0;
-  const isActive = stream.status !== null && !TERMINAL_STATUSES.has(stream.status);
-  const isCompleted = stream.status === 'completed';
-  const isFailed = stream.status === 'failed';
+  const isActive = status !== null && !TERMINAL_STATUSES.has(status);
+  const isCompleted = status === 'completed';
+  const isFailed = status === 'failed';
+
 
   return (
     <div className="page">
@@ -116,7 +154,7 @@ export default function JobDetailPage() {
 
         <JobStatusBar
           url={url || hash}
-          status={stream.status}
+          status={status}
           currentStep={currentStep}
           maxSteps={30}
           tokenUsage={stream.tokenUsage}
@@ -183,8 +221,8 @@ export default function JobDetailPage() {
               <span>❌</span>
               <div>
                 <h2>Generation Failed</h2>
-                {stream.error && (
-                  <p className="text-muted text-sm mt-2">{stream.error}</p>
+                {error && (
+                  <p className="text-muted text-sm mt-2">{error}</p>
                 )}
                 {stream.verificationErrors.length > 0 && (
                   <div className="code-block mt-4" style={{ maxHeight: 160, overflowY: 'auto' }}>

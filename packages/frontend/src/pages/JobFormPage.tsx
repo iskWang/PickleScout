@@ -65,11 +65,11 @@ export default function JobFormPage() {
   }, [llm]);
 
   const urlValid = isValidUrl(url);
+  const customBaseURLValid = llm.provider !== 'custom' || !!llm.baseURL?.trim();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!urlValid || !llm.apiKey || !llm.model) return;
-
+    if (!urlValid || !llm.apiKey || !llm.model || !customBaseURLValid) return;
     setSubmitting(true);
     setError(null);
 
@@ -178,7 +178,7 @@ export default function JobFormPage() {
               id="submit-job"
               type="submit"
               className="btn btn-primary btn-lg w-full mt-6"
-              disabled={submitting || !urlValid || !llm.apiKey || !llm.model}
+              disabled={submitting || !urlValid || !llm.apiKey || !llm.model || !customBaseURLValid}
             >
               {submitting ? (
                 <>

@@ -114,8 +114,11 @@ export default function ProviderSelector({ value, onChange }: Props) {
             placeholder="https://api.yourprovider.com/v1"
             value={value.baseURL ?? ''}
             onChange={(e) => onChange({ ...value, baseURL: e.target.value })}
+            required
+            aria-required="true"
+            aria-describedby="ps-baseurl-hint"
           />
-          <p className="form-hint notice notice-warning mt-2">
+          <p id="ps-baseurl-hint" className="form-hint notice notice-warning mt-2">
             ⚠ Verify that this model supports structured output / function calling.
           </p>
         </div>
