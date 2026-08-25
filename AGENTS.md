@@ -21,6 +21,11 @@ packages/
 
 Shared types live in `packages/shared/src/types.ts` — modify there, never duplicate in frontend or backend.
 
+## Domain Language
+
+- **Journey**: A named group of related user activity inferred by the explorer, such as `login` or `create_order`. One Journey may contain multiple Scenarios. Use `Journey`, not flow or user flow.
+- **Scenario**: One generated test case represented by a Gherkin `Scenario:` block. Scenarios are countable and classified as positive (happy path) or negative. Use `Scenario`, not test case or flow.
+
 ## Commands
 ```bash
 docker compose up                        # start all services
