@@ -9,7 +9,7 @@ import { streamRoutes } from './routes/stream';
 import { resultRoutes } from './routes/result';
 import { screenshotRoutes } from './routes/screenshots';
 import { startWorker, generationQueue } from './worker';
-import { runStartupTasks } from './startup';
+import { ensureScreenshotStorageDir, runStartupTasks } from './startup';
 import { startReconciler } from './reconciler';
 
 const PORT = parseInt(process.env.PORT ?? '3000', 10);
@@ -25,6 +25,10 @@ async function main(): Promise<void> {
           : undefined,
     },
   });
+
+  // The static plugin validates its root during registration. Create it first
+  // so local and container starts behave the same when storage is empty.
+  await ensureScreenshotStorageDir();
 
   // CORS — allow frontend origin
   await fastify.register(cors, {

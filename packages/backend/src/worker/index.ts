@@ -11,7 +11,7 @@
 import { Queue, Worker, type Job } from 'bullmq';
 import path from 'path';
 import fs from 'fs/promises';
-import { getBullRedisClient, getJobState, updateJobStatus } from '../redis';
+import { getBullRedisClient, getJobState, updateJobStatus, TERMINAL_STATUSES } from '../redis';
 import { runExplorer } from './explorer';
 import { runGenerator, rerunPass2 } from './generator';
 import { runVerifier, attemptSelfHeal, checkStepResolution } from './verifier';
@@ -80,17 +80,20 @@ export function startWorker(): Worker {
 
 // ─── Pipeline Orchestration ───────────────────────────────────────────────────
 
-async function processJob(hash: string, signal: AbortSignal): Promise<void> {
+export async function processJob(hash: string, signal: AbortSignal): Promise<void> {
   resetJobCounter(hash);
 
   const state = await getJobState(hash);
   if (!state) {
     throw new Error(`Job ${hash} not found in Redis`);
   }
+  if (TERMINAL_STATUSES.has(state.status)) return;
 
   try {
     // Phase 1: Exploration
     const actionLog = await runExplorer(state, signal);
+    const afterExploration = await getJobState(hash);
+    if (!afterExploration || TERMINAL_STATUSES.has(afterExploration.status)) return;
 
     // Detect hallucination risk: exploration produced no interaction entries.
     // The LLM will fall back to training-data guesses about the site, so flag the
@@ -113,8 +116,11 @@ async function processJob(hash: string, signal: AbortSignal): Promise<void> {
     // Phase 2: LLM Generation
     const freshState = await getJobState(hash);
     if (!freshState) throw new Error('Job state lost after exploration');
+    if (TERMINAL_STATUSES.has(freshState.status)) return;
 
     const artifact = await runGenerator(freshState, actionLog, signal);
+    const afterGeneration = await getJobState(hash);
+    if (!afterGeneration || TERMINAL_STATUSES.has(afterGeneration.status)) return;
 
     // Prepare artifact directory for verification
     const artifactDir = path.join(STORAGE_DIR, 'generated', hash);
@@ -133,7 +139,9 @@ async function processJob(hash: string, signal: AbortSignal): Promise<void> {
         message: `Step resolution: ${issueCount} unresolved/ambiguous step(s) detected — regenerating Pass 2…`,
       });
 
-      currentStepFiles = await rerunPass2(freshState, actionLog, artifact.featureFiles, signal);
+      const rerun = await rerunPass2(freshState, actionLog, artifact.featureFiles, signal);
+      artifact.featureFiles = rerun.featureFiles;
+      currentStepFiles = rerun.stepFiles;
       stepResolutionIssues = await checkStepResolution(artifactDir);
 
       if (stepResolutionIssues.length > 0) {
@@ -164,6 +172,10 @@ async function processJob(hash: string, signal: AbortSignal): Promise<void> {
     const maxRetries = freshState.options.maxRetries;
 
     while (!verificationResult.passed && retries < maxRetries) {
+      const loopState = await getJobState(hash);
+      if (!loopState) throw new Error('Job state lost during self-healing');
+      if (TERMINAL_STATUSES.has(loopState.status)) return;
+
       retries++;
       await emitEvent(hash, {
         type: 'llm_log',
@@ -172,6 +184,7 @@ async function processJob(hash: string, signal: AbortSignal): Promise<void> {
 
       const latestState = await getJobState(hash);
       if (!latestState) throw new Error('Job state lost during self-healing');
+      if (TERMINAL_STATUSES.has(latestState.status)) return;
 
       // Attempt self-heal — LLM may return only a subset, so merge by basename onto the existing set.
       // This preserves files the LLM left untouched and prevents the zip/disk from losing them.
@@ -237,9 +250,14 @@ async function processJob(hash: string, signal: AbortSignal): Promise<void> {
     // Phase 4: Package output
     const finalState = await getJobState(hash);
     if (!finalState) throw new Error('Job state lost before packaging');
+    if (TERMINAL_STATUSES.has(finalState.status)) return;
 
     const updatedArtifact = { ...artifact, stepFiles: currentStepFiles };
     await runPackager(finalState, updatedArtifact, actionLog, verificationResult.passed, unhealedScenarios);
+
+    const beforeFinalStatus = await getJobState(hash);
+    if (!beforeFinalStatus) throw new Error('Job state lost before final status');
+    if (TERMINAL_STATUSES.has(beforeFinalStatus.status)) return;
 
     // Update final status
     const finalStatus = verificationResult.passed ? 'completed' : 'failed';

@@ -70,7 +70,18 @@ export async function updateJobStatus(
 ): Promise<JobState | null> {
   const current = await getJobState(hash);
   if (!current) return null;
-  const updated: JobState = { ...current, ...patch, updatedAt: Date.now() };
+
+  // Terminal jobs are immutable with respect to lifecycle status. A late
+  // worker stage may still attach metadata, but must not revive or overwrite
+  // a completed/failed result.
+  const status = current.status;
+  const requestedStatus = patch.status;
+  const isTerminal = TERMINAL_STATUSES.has(status);
+  const changesStatus = requestedStatus !== undefined && requestedStatus !== status;
+  const effectivePatch = isTerminal && changesStatus
+    ? { ...patch, status }
+    : patch;
+  const updated: JobState = { ...current, ...effectivePatch, updatedAt: Date.now() };
   await setJobState(updated);
   return updated;
 }

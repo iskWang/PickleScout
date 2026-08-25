@@ -53,6 +53,7 @@ export async function streamRoutes(fastify: FastifyInstance): Promise<void> {
       });
 
       const send = (event: StreamEvent): void => {
+        if (closed) return;
         const data = JSON.stringify(event);
         reply.raw.write(`id: ${event.id}\ndata: ${data}\n\n`);
       };
@@ -71,10 +72,15 @@ export async function streamRoutes(fastify: FastifyInstance): Promise<void> {
         reply.raw.end();
       };
 
+      // Register before any await: a client can disconnect while Redis
+      // subscribe is pending and must still release the subscriber.
+      request.raw.on('close', cleanup);
+
       // Subscribe before replaying — ensures no live events are missed between replay and subscribe
       await subscriber.subscribe(channel);
 
       subscriber.on('message', (_ch: string, message: string) => {
+        if (closed) return;
         try {
           const event = JSON.parse(message) as StreamEvent;
           send(event);
@@ -90,8 +96,11 @@ export async function streamRoutes(fastify: FastifyInstance): Promise<void> {
         }
       });
 
+      if (closed) return;
+
       // Replay buffered events
       const buffered = await getSseEvents(hash, lastSeenId);
+      if (closed) return;
       for (const event of buffered) {
         send(event);
       }
@@ -102,14 +111,13 @@ export async function streamRoutes(fastify: FastifyInstance): Promise<void> {
         cleanup();
         return;
       }
+      if (closed) return;
 
       // Heartbeat every 25s to prevent proxy timeouts
       heartbeat = setInterval(() => {
-        reply.raw.write(': heartbeat\n\n');
+        if (!closed) reply.raw.write(': heartbeat\n\n');
       }, 25_000);
 
-      // Cleanup on client disconnect
-      request.raw.on('close', cleanup);
     }
   );
 }

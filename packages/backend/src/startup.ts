@@ -10,9 +10,13 @@
 import path from 'path';
 import fs from 'fs/promises';
 import { getRedisClient, getJobState, updateJobStatus, TERMINAL_STATUSES } from './redis';
+import { emitEvent } from './worker/sse';
 import { safeLog } from './utils/safeLog';
 
 const STORAGE_DIR = process.env.STORAGE_DIR ?? '/storage';
+export async function ensureScreenshotStorageDir(storageDir = STORAGE_DIR): Promise<void> {
+  await fs.mkdir(path.join(storageDir, 'screenshots'), { recursive: true });
+}
 
 export async function runStartupTasks(): Promise<void> {
   // eslint-disable-next-line no-console
@@ -47,6 +51,10 @@ async function markOrphanJobsFailed(): Promise<void> {
         status: 'failed',
         error: 'Service restarted. Please retry your job.',
       });
+      await Promise.all([
+        emitEvent(hash, { type: 'error', message: 'Service restarted. Please retry your job.', retryable: true }),
+        emitEvent(hash, { type: 'status', status: 'failed' }),
+      ]);
       markedFailed++;
       // eslint-disable-next-line no-console
       console.log(safeLog({ msg: 'Orphan job marked failed', hash }));
