@@ -4,9 +4,9 @@ services:
       context: .
       dockerfile: packages/frontend/Dockerfile
       args:
-        VITE_API_URL: http://localhost:3000
+        VITE_API_URL: http://localhost:${BACKEND_PORT:-3100}
     ports:
-      - '5173:5173'
+      - '${FRONTEND_PORT:-5175}:5173'
     depends_on:
       - backend
 
@@ -15,13 +15,13 @@ services:
       context: .
       dockerfile: packages/backend/Dockerfile
     ports:
-      - '3000:3000'
+      - '${BACKEND_PORT:-3100}:3000'
     shm_size: '2gb'
     environment:
       REDIS_URL: redis://redis:6379
       MAX_CONCURRENT_JOBS: '2'
       STORAGE_DIR: /storage
-      CORS_ORIGINS: 'http://localhost:5173'
+      CORS_ORIGINS: 'http://localhost:${FRONTEND_PORT:-5175}'
       JOB_TTL_DAYS: '7'
       PAGE_TIMEOUT_SEC: '30'
       LLM_CALL_TIMEOUT_SEC: '60'
