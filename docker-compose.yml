@@ -1,5 +1,6 @@
 services:
   frontend:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: packages/frontend/Dockerfile
@@ -11,6 +12,7 @@ services:
       - backend
 
   backend:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: packages/backend/Dockerfile
@@ -34,6 +36,7 @@ services:
         condition: service_healthy
 
   redis:
+    restart: unless-stopped
     image: redis:7-alpine
     command: redis-server --save 60 1 --loglevel warning
     # Internal network only — never bind to host port
