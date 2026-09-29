@@ -13,7 +13,7 @@
 [中文版 README](README.zh-TW.md)
 
 <div align="center">
-  <video src="https://github.com/user-attachments/assets/3ad001a5-7c62-4b8c-8035-aa41747686c5" width="900" controls muted></video>
+  <video src="https://github.com/user-attachments/assets/bc9d3017-f380-4b6c-be1e-40bcdceaecb6" width="900" controls></video>
 </div>
 
 ---
@@ -24,6 +24,12 @@
 2. **Generate** — Two-pass LLM pipeline converts the `ActionLog` into Gherkin `.feature` files and TypeScript Playwright step definitions.
 3. **Verify** — Generated tests are run once with `cucumber-js` inside the backend. If they fail, a self-healing LLM call attempts selector and timeout fixes.
 4. **Package** — Everything is zipped into a standalone project you can drop into any CI/CD pipeline — zero LLM dependency at runtime.
+
+### See it in action
+
+<div align="center">
+  <video src="https://github.com/user-attachments/assets/3ad001a5-7c62-4b8c-8035-aa41747686c5" width="900" controls muted></video>
+</div>
 
 ---
 

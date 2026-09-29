@@ -13,7 +13,7 @@
 [English README](README.md)
 
 <div align="center">
-  <video src="https://github.com/user-attachments/assets/3ad001a5-7c62-4b8c-8035-aa41747686c5" width="900" controls muted></video>
+  <video src="https://github.com/user-attachments/assets/bc9d3017-f380-4b6c-be1e-40bcdceaecb6" width="900" controls></video>
 </div>
 
 ---
@@ -24,6 +24,12 @@
 2. **生成** — 雙階段 LLM 流水線將 `ActionLog` 轉換為 Gherkin `.feature` 檔與 TypeScript Playwright 步驟定義。
 3. **驗證** — 在後端用 `cucumber-js` 執行一次生成的測試。若失敗，自我修復 LLM 呼叫會嘗試修正 selector 和 timeout。
 4. **打包** — 所有檔案打包成獨立 zip，可直接放入任何 CI/CD 流水線——執行時零 LLM 依賴。
+
+### 實際操作
+
+<div align="center">
+  <video src="https://github.com/user-attachments/assets/3ad001a5-7c62-4b8c-8035-aa41747686c5" width="900" controls muted></video>
+</div>
 
 ---
 
