@@ -32,7 +32,9 @@ async function main(): Promise<void> {
 
   // CORS — allow frontend origin
   await fastify.register(cors, {
-    origin: ['http://localhost:5173', 'http://frontend:5173'],
+    // @fastify/cors treats '*' inside an array as a wildcard, not an exact origin.
+    origin: process.env.CORS_ORIGINS?.split(',').filter((origin) => origin !== '*')
+      ?? ['http://localhost:5173', 'http://frontend:5173'],
     methods: ['GET', 'POST', 'DELETE'],
   });
 

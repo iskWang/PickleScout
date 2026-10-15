@@ -1,13 +1,190 @@
 import { World, setWorldConstructor, IWorldOptions } from '@cucumber/cucumber';
 import { Browser, BrowserContext, Page } from '@playwright/test';
+import * as fs from 'fs';
+import * as path from 'path';
+
+// ─── Repair plan — fixed data schema, no executable content ──────────────────
+// Only `getByRole` / `getByLabel` / `getByText` sources can be remapped to a
+// Playwright locator selector string. The selector is opaque data handed to
+// `page.locator()`; it is never evaluated, imported, or treated as code.
+
+type RepairMethod = 'getByRole' | 'getByLabel' | 'getByText';
+
+interface RepairLocator {
+  method: RepairMethod;
+  value: string;
+  role?: string;
+  selector: string;
+}
+
+interface RepairPlan {
+  version: 1;
+  locators: RepairLocator[];
+  actionTimeoutMs: number;
+}
+
+const EMPTY_REPAIR_PLAN: RepairPlan = { version: 1, locators: [], actionTimeoutMs: 30000 };
+const INVALID_REPAIR_PLAN_MESSAGE = 'Invalid repair plan: repair.json failed validation.';
+const ALLOWED_METHODS: RepairMethod[] = ['getByRole', 'getByLabel', 'getByText'];
+const MAX_VALUE_LENGTH = 300;
+const MAX_SELECTOR_LENGTH = 500;
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isXPathSelector(selector: string): boolean {
+  const s = selector.trim().toLowerCase();
+  return s.startsWith('//') || s.startsWith('..') || s.startsWith('(') || s.startsWith('xpath=');
+}
+
+function invalid(): never {
+  throw new Error(INVALID_REPAIR_PLAN_MESSAGE);
+}
+
+function validateRepairPlan(data: unknown): RepairPlan {
+  if (!isPlainObject(data)) invalid();
+  const topKeys = Object.keys(data);
+  if (
+    topKeys.length !== 3 ||
+    !topKeys.includes('version') ||
+    !topKeys.includes('locators') ||
+    !topKeys.includes('actionTimeoutMs')
+  ) {
+    invalid();
+  }
+  if (data.version !== 1) invalid();
+  if (!Array.isArray(data.locators)) invalid();
+  if (
+    typeof data.actionTimeoutMs !== 'number' ||
+    !Number.isInteger(data.actionTimeoutMs) ||
+    data.actionTimeoutMs < 30000 ||
+    data.actionTimeoutMs > 45000
+  ) {
+    invalid();
+  }
+
+  const seen = new Set<string>();
+  const locators: RepairLocator[] = data.locators.map((entry: unknown): RepairLocator => {
+    if (!isPlainObject(entry)) invalid();
+    const method = entry.method;
+    if (typeof method !== 'string' || !ALLOWED_METHODS.includes(method as RepairMethod)) invalid();
+
+    const entryKeys = Object.keys(entry);
+    const expectedKeys = method === 'getByRole' ? ['method', 'value', 'role', 'selector'] : ['method', 'value', 'selector'];
+    if (entryKeys.length !== expectedKeys.length || !expectedKeys.every((k) => entryKeys.includes(k))) invalid();
+
+    const value = entry.value;
+    if (typeof value !== 'string' || value.length === 0 || value.length > MAX_VALUE_LENGTH) invalid();
+
+    const selector = entry.selector;
+    if (typeof selector !== 'string' || selector.length === 0 || selector.length > MAX_SELECTOR_LENGTH) invalid();
+    if (isXPathSelector(selector)) invalid();
+
+    let role: string | undefined;
+    if (method === 'getByRole') {
+      role = entry.role;
+      if (typeof role !== 'string' || role.length === 0) invalid();
+    }
+
+    const dupKey = `${method}::${role ?? ''}::${value}`;
+    if (seen.has(dupKey)) invalid();
+    seen.add(dupKey);
+
+    return role !== undefined
+      ? { method: method as RepairMethod, value, role, selector }
+      : { method: method as RepairMethod, value, selector };
+  });
+
+  return { version: 1, locators, actionTimeoutMs: data.actionTimeoutMs };
+}
+
+function loadRepairPlan(): RepairPlan {
+  // Fixed, non-configurable path — no user/model input ever reaches this call.
+  const repairPath = path.join(__dirname, '..', 'repair.json');
+  let raw: string;
+  try {
+    raw = fs.readFileSync(repairPath, 'utf-8');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return EMPTY_REPAIR_PLAN;
+    throw new Error(INVALID_REPAIR_PLAN_MESSAGE);
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    invalid();
+  }
+  return validateRepairPlan(parsed);
+}
+
+function buildRepairMap(plan: RepairPlan): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const loc of plan.locators) {
+    map.set(`${loc.method}::${loc.role ?? ''}::${loc.value}`, loc.selector);
+  }
+  return map;
+}
+
+function wrapPage(target: Page, repairMap: Map<string, string>): Page {
+  return new Proxy(target, {
+    get(obj, prop) {
+      if (prop === 'getByRole') {
+        return (role: unknown, options?: { name?: unknown; [key: string]: unknown }) => {
+          if (typeof role === 'string' && options && typeof options.name === 'string') {
+            const selector = repairMap.get(`getByRole::${role}::${options.name}`);
+            if (selector !== undefined) return obj.locator(selector);
+          }
+          return (obj.getByRole as (...args: unknown[]) => unknown)(role, options);
+        };
+      }
+      if (prop === 'getByText') {
+        return (text: unknown, options?: unknown) => {
+          if (typeof text === 'string') {
+            const selector = repairMap.get(`getByText::::${text}`);
+            if (selector !== undefined) return obj.locator(selector);
+          }
+          return (obj.getByText as (...args: unknown[]) => unknown)(text, options);
+        };
+      }
+      if (prop === 'getByLabel') {
+        return (text: unknown, options?: unknown) => {
+          if (typeof text === 'string') {
+            const selector = repairMap.get(`getByLabel::::${text}`);
+            if (selector !== undefined) return obj.locator(selector);
+          }
+          return (obj.getByLabel as (...args: unknown[]) => unknown)(text, options);
+        };
+      }
+      const value = Reflect.get(obj, prop, obj);
+      return typeof value === 'function' ? value.bind(obj) : value;
+    },
+  });
+}
 
 export class CustomWorld extends World {
   browser!: Browser;
   context!: BrowserContext;
-  page!: Page;
+
+  private _page!: Page;
+  private readonly repairPlan: RepairPlan;
+  private readonly repairMap: Map<string, string>;
 
   constructor(options: IWorldOptions) {
     super(options);
+    this.repairPlan = loadRepairPlan();
+    this.repairMap = buildRepairMap(this.repairPlan);
+  }
+
+  get page(): Page {
+    return this._page;
+  }
+
+  set page(value: Page) {
+    if (this.repairPlan.locators.length > 0) {
+      value.setDefaultTimeout(this.repairPlan.actionTimeoutMs);
+    }
+    this._page = wrapPage(value, this.repairMap);
   }
 }
 

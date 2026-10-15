@@ -16,10 +16,8 @@ import { runExplorer } from './explorer';
 import { runGenerator, rerunPass2 } from './generator';
 import { runVerifier, attemptSelfHeal, checkStepResolution } from './verifier';
 import { runPackager, prepareVerificationDir } from './packager';
-import { validateOutput } from './output-validator';
-import { TEMPLATE_CATALOG } from '../templates/steps/index';
 import { emitEvent, resetJobCounter } from './sse';
-import { safeLog } from '../utils/safeLog';
+import { safeLog, safeDiagnostic, sanitizeDiagnosticEvent } from '../utils/safeLog';
 
 const STORAGE_DIR = process.env.STORAGE_DIR ?? '/storage';
 const MAX_CONCURRENT = parseInt(process.env.MAX_CONCURRENT_JOBS ?? '2', 10);
@@ -67,9 +65,10 @@ export function startWorker(): Worker {
 
   worker.on('failed', async (job, err) => {
     if (job) {
+      const message = safeDiagnostic(err);
       // eslint-disable-next-line no-console
-      console.error(safeLog({ msg: 'Worker job failed', hash: job.data.hash, error: err.message }));
-      await failJob(job.data.hash, err.message);
+      console.error(safeLog({ msg: 'Worker job failed', hash: job.data.hash, error: message }));
+      await failJob(job.data.hash, message);
     }
   });
 
@@ -81,15 +80,14 @@ export function startWorker(): Worker {
 // ─── Pipeline Orchestration ───────────────────────────────────────────────────
 
 export async function processJob(hash: string, signal: AbortSignal): Promise<void> {
-  resetJobCounter(hash);
-
-  const state = await getJobState(hash);
-  if (!state) {
-    throw new Error(`Job ${hash} not found in Redis`);
-  }
-  if (TERMINAL_STATUSES.has(state.status)) return;
-
   try {
+    resetJobCounter(hash);
+    const state = await getJobState(hash);
+    if (!state) {
+      throw new Error('Job state not found in Redis');
+    }
+    if (TERMINAL_STATUSES.has(state.status)) return;
+
     // Phase 1: Exploration
     const actionLog = await runExplorer(state, signal);
     const afterExploration = await getJobState(hash);
@@ -186,43 +184,18 @@ export async function processJob(hash: string, signal: AbortSignal): Promise<voi
       if (!latestState) throw new Error('Job state lost during self-healing');
       if (TERMINAL_STATUSES.has(latestState.status)) return;
 
-      // Attempt self-heal — LLM may return only a subset, so merge by basename onto the existing set.
-      // This preserves files the LLM left untouched and prevents the zip/disk from losing them.
-      const preHealFiles = new Map(currentStepFiles.map((f) => [path.basename(f.filename), f]));
-      const healed = await attemptSelfHeal(latestState, currentStepFiles, verificationResult.errors, signal);
-      const merged = new Map(preHealFiles);
-      for (const h of healed) {
-        merged.set(path.basename(h.filename), { filename: path.basename(h.filename), content: h.content });
-      }
-      const mergedFiles = Array.from(merged.values());
-
-      // Guard: revert any file where self-healer introduced TEMPLATE_MODIFIED or ROGUE_SET_TIMEOUT
-      const healValidation = validateOutput(artifact.featureFiles, mergedFiles, TEMPLATE_CATALOG);
-      const protectedCodes = new Set(['TEMPLATE_MODIFIED', 'ROGUE_SET_TIMEOUT', 'XPATH_IN_STEPS', 'BROWSER_GLOBAL']);
-      const violatingFiles = new Set(
-        healValidation.issues
-          .filter((i) => i.severity === 'error' && protectedCodes.has(i.code))
-          .map((i) => {
-            const m = i.message.match(/^\[([^\]]+)\]/);
-            return m ? m[1] : null;
-          })
-          .filter(Boolean) as string[]
-      );
-      if (violatingFiles.size > 0) {
-        for (const filename of violatingFiles) {
-          const original = preHealFiles.get(filename);
-          if (original) merged.set(filename, original);
-        }
+      // Attempt self-heal — frozen interface returns a locator RepairPlan only
+      // (never rewrites steps/features); the plan is read at runtime by
+      // world.ts.template via a Proxy, so nothing else needs to change here.
+      try {
+        const plan = await attemptSelfHeal(latestState, artifactDir, verificationResult.errors, signal);
+        await fs.writeFile(path.join(artifactDir, 'repair.json'), JSON.stringify(plan), 'utf-8');
+      } catch {
         await emitEvent(hash, {
           type: 'llm_log',
-          message: `[HEAL_GUARD] Reverted ${violatingFiles.size} file(s) — self-healer violated template integrity: ${[...violatingFiles].join(', ')}`,
+          message: 'Self-heal response rejected.',
         });
-      }
-      currentStepFiles = Array.from(merged.values());
-
-      // Write (possibly reverted) files back
-      for (const f of currentStepFiles) {
-        await fs.writeFile(path.join(artifactDir, 'steps', path.basename(f.filename)), f.content, 'utf-8');
+        break;
       }
 
       // Re-verify
@@ -233,11 +206,14 @@ export async function processJob(hash: string, signal: AbortSignal): Promise<voi
       // Count unhealed scenarios and tag them
       unhealedScenarios = countUnhealedScenarios(verificationResult.errors);
 
-      await emitEvent(hash, {
-        type: 'verification',
-        passed: false,
-        errors: verificationResult.errors.slice(0, 5),
-      });
+      await emitEvent(
+        hash,
+        sanitizeDiagnosticEvent({
+          type: 'verification',
+          passed: false,
+          errors: verificationResult.errors.slice(0, 5),
+        }),
+      );
 
       await emitEvent(hash, {
         type: 'llm_log',
@@ -267,9 +243,9 @@ export async function processJob(hash: string, signal: AbortSignal): Promise<voi
     // eslint-disable-next-line no-console
     console.log(safeLog({ msg: 'Job complete', hash, status: finalStatus }));
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = safeDiagnostic(err);
     await failJob(hash, message);
-    throw err;
+    throw new Error(message);
   }
 }
 
@@ -277,16 +253,17 @@ export async function processJob(hash: string, signal: AbortSignal): Promise<voi
 
 async function failJob(hash: string, message: string): Promise<void> {
   try {
-    await updateJobStatus(hash, { status: 'failed', error: message });
+    const safeMessage = safeDiagnostic(message);
+    await updateJobStatus(hash, { status: 'failed', error: safeMessage });
     await emitEvent(hash, {
       type: 'error',
-      message,
+      message: safeMessage,
       retryable: false,
     });
     await emitEvent(hash, { type: 'status', status: 'failed' });
   } catch (err) {
     // Best-effort — don't throw from error handler, but surface for ops visibility
-    console.error(safeLog({ msg: 'failJob could not persist failure state', hash, error: err instanceof Error ? err.message : String(err) }));
+    console.error(safeLog({ msg: 'failJob could not persist failure state', hash, error: safeDiagnostic(err) }));
   }
 }
 

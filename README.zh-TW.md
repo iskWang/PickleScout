@@ -188,6 +188,8 @@ docker compose up
 開啟 [http://localhost:5175](http://localhost:5175)。
 後端 API 預設發佈在 [http://localhost:3100](http://localhost:3100)。如要更換主機 port，請在啟動 Compose 前於 `.env` 設定 `FRONTEND_PORT` 和／或 `BACKEND_PORT`（例如 `BACKEND_PORT=4100 FRONTEND_PORT=5176 docker compose up`）；容器內仍使用 3000 和 5173。
 
+後端的 `CORS_ORIGINS` 使用逗號分隔的完整瀏覽器來源，不加空白或 `*`；Compose 會依 `FRONTEND_PORT` 設定。直接執行後端時，未設定此值會保留開發來源 `http://localhost:5173` 與 `http://frontend:5173`；設為空字串則不允許跨來源瀏覽器存取。
+
 ### 執行生成的測試
 
 ```bash

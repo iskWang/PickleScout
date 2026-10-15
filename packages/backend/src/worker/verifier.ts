@@ -6,18 +6,23 @@
  * - smoke (default): Run cucumber-js once per scenario, no flake retry
  * - full: Run twice on flake before declaring failure (Phase 2)
  *
- * Self-healing scope (PRD §3.4):
- * - Allowed: selector replacement, timeout adjustment, wait strategy, assertion refinement
- * - Disallowed: changing scenario intent, removing assertions, modifying step text
+ * Self-healing scope (PRD §3.4 / review R2):
+ * - attemptSelfHeal returns DATA ONLY (a RepairPlan of Playwright locators + a
+ *   timeout), never program files or code. The model never sees or edits
+ *   step/feature source; it can only pick stable locators already present in
+ *   the generated intent spec.
+ * - Disallowed: changing scenario intent, removing assertions, modifying step
+ *   text, remapping an assertion's source to an action locator.
  */
 
 import { spawn } from 'child_process';
 import path from 'path';
 import fs from 'fs/promises';
-import type { JobState, StepResolutionResult, VerificationMode } from '../types';
+import type { JobState, StepResolutionResult, VerificationMode, IntentSpec } from '../types';
 import { updateJobStatus } from '../redis';
 import { emitEvent } from './sse';
 import { buildOpenAIClient, stripMarkdownJson } from './generator';
+import { safeDiagnostic } from '../utils/safeLog';
 
 export interface VerificationResult {
   passed: boolean;
@@ -62,13 +67,10 @@ async function ensureInstalled(artifactDir: string, signal?: AbortSignal): Promi
       timeout: 120_000,
       signal,
     });
-    const out: string[] = [];
-    install.stdout?.on('data', (chunk: Buffer) => out.push(chunk.toString()));
-    install.stderr?.on('data', (chunk: Buffer) => out.push(chunk.toString()));
     install.on('error', reject);
     install.on('close', (code) => {
       if (code === 0) resolve();
-      else reject(new Error(`pnpm install failed (exit ${code}): ${out.slice(-5).join('')}`));
+      else reject(new Error('Dependency installation failed.'));
     });
   });
 }
@@ -145,14 +147,9 @@ async function spawnCucumber(hash: string, artifactDir: string, signal?: AbortSi
     );
 
     const output: string[] = [];
-    const emitLine = (chunk: Buffer) => {
-      const text = chunk.toString();
-      output.push(text);
-      const trimmed = text.trim();
-      if (trimmed) emitEvent(hash, { type: 'llm_log', message: `[cucumber] ${trimmed}` }).catch(() => undefined);
-    };
-    proc.stdout.on('data', emitLine);
-    proc.stderr.on('data', emitLine);
+    const collect = (chunk: Buffer) => { output.push(chunk.toString()); };
+    proc.stdout.on('data', collect);
+    proc.stderr.on('data', collect);
 
     proc.on('error', reject);
     proc.on('close', async (code) => {
@@ -342,65 +339,236 @@ export async function checkStepResolution(artifactDir: string): Promise<StepReso
 
 // ─── Self-heal attempt ────────────────────────────────────────────────────────
 
+export interface RepairPlan {
+  version: 1;
+  locators: Array<{
+    method: 'getByRole' | 'getByLabel' | 'getByText';
+    value: string;
+    role?: string;
+    selector: string;
+  }>;
+  actionTimeoutMs: number;
+}
+
+type RepairLocator = RepairPlan['locators'][number];
+type LocatorMethod = RepairLocator['method'];
+
+interface LocatorTuple {
+  method: LocatorMethod;
+  value: string;
+  role?: string;
+}
+
+function tupleKey(t: LocatorTuple): string {
+  return `${t.method}\u0000${t.value}\u0000${t.role ?? ''}`;
+}
+
+// Templates whose locator may be repaired, mapped to the source tuple they expose.
+const REPAIRABLE_EXTRACTORS: Record<string, (params: Record<string, string>) => LocatorTuple | undefined> = {
+  click_by_text: (p) => (p.text ? { method: 'getByText', value: p.text } : undefined),
+  click_by_label: (p) => (p.label ? { method: 'getByLabel', value: p.label } : undefined),
+  click_by_role: (p) => (p.name && p.role ? { method: 'getByRole', value: p.name, role: p.role } : undefined),
+  // fill_by_label tries getByRole('textbox', { name }) first and only falls back to
+  // getByLabel when nothing matches, so the textbox role is the source a repair must target.
+  fill_by_label: (p) => (p.field ? { method: 'getByRole', value: p.field, role: 'textbox' } : undefined),
+  select_option: (p) => (p.dropdown ? { method: 'getByLabel', value: p.dropdown } : undefined),
+};
+
+const ASSERTION_TEMPLATES: Record<string, true> = { assert_visible: true, assert_not_visible: true };
+
+// Sources used by click/fill/select, minus any source also used by an assertion
+// (so a repair can never silently change what an assertion checks for).
+function buildAllowedLocators(intentSpec: IntentSpec): Map<string, LocatorTuple> {
+  const allowed = new Map<string, LocatorTuple>();
+  const excluded = new Set<string>();
+
+  for (const scenario of intentSpec.scenarios ?? []) {
+    for (const step of scenario.steps ?? []) {
+      const extractor = REPAIRABLE_EXTRACTORS[step.templateId];
+      if (extractor) {
+        const tuple = extractor(step.params ?? {});
+        if (tuple) allowed.set(tupleKey(tuple), tuple);
+        continue;
+      }
+      if (ASSERTION_TEMPLATES[step.templateId]) {
+        const text = step.params?.text;
+        if (text) excluded.add(tupleKey({ method: 'getByText', value: text }));
+      }
+    }
+  }
+
+  for (const key of excluded) allowed.delete(key);
+  return allowed;
+}
+
+async function readIntentSpec(artifactDir: string): Promise<IntentSpec> {
+  const raw = await fs.readFile(path.join(artifactDir, 'intent-spec.json'), 'utf-8');
+  return JSON.parse(raw) as IntentSpec;
+}
+
+const EMPTY_REPAIR_PLAN: RepairPlan = { version: 1, locators: [], actionTimeoutMs: 30000 };
+
+async function readCurrentRepairPlan(artifactDir: string): Promise<RepairPlan> {
+  try {
+    const raw = await fs.readFile(path.join(artifactDir, 'repair.json'), 'utf-8');
+    return JSON.parse(raw) as RepairPlan;
+  } catch {
+    return EMPTY_REPAIR_PLAN;
+  }
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function rejectedError(): Error {
+  return new Error('Self-heal response rejected.');
+}
+
+const ROLE_LOCATOR_KEYS = ['method', 'value', 'role', 'selector'] as const;
+const PLAIN_LOCATOR_KEYS = ['method', 'value', 'selector'] as const;
+
+// Keep these bounds and XPath checks aligned with the standalone World template.
+const MAX_VALUE_LENGTH = 300;
+const MAX_SELECTOR_LENGTH = 500;
+
+function isXPathSelector(selector: string): boolean {
+  const s = selector.trim().toLowerCase();
+  return s.startsWith('//') || s.startsWith('..') || s.startsWith('(') || s.startsWith('xpath=');
+}
+
+function validateLocator(item: unknown, allowed: Map<string, LocatorTuple>, seen: Set<string>): RepairLocator {
+  if (!isPlainObject(item)) throw rejectedError();
+
+  const method = item.method;
+  if (method !== 'getByRole' && method !== 'getByLabel' && method !== 'getByText') throw rejectedError();
+
+  const allowedKeys: readonly string[] = method === 'getByRole' ? ROLE_LOCATOR_KEYS : PLAIN_LOCATOR_KEYS;
+  const keys = Object.keys(item);
+  if (keys.length !== allowedKeys.length || !keys.every((k) => allowedKeys.includes(k))) throw rejectedError();
+
+  const value = item.value;
+  if (typeof value !== 'string' || value.trim().length === 0 || value.length > MAX_VALUE_LENGTH) throw rejectedError();
+
+  let role: string | undefined;
+  if (method === 'getByRole') {
+    const roleValue = item.role;
+    if (typeof roleValue !== 'string' || roleValue.trim().length === 0) throw rejectedError();
+    role = roleValue;
+  }
+
+  const selector = item.selector;
+  if (typeof selector !== 'string' || selector.length === 0 || selector.length > MAX_SELECTOR_LENGTH) throw rejectedError();
+  const lowerSelector = selector.trim().toLowerCase();
+  if (isXPathSelector(selector) || lowerSelector.includes('/html[') || lowerSelector.startsWith('/')) {
+    throw rejectedError();
+  }
+
+  const key = tupleKey({ method, value, role });
+  // World uses this key for both duplicate detection and runtime lookup.
+  const runtimeKey = `${method}::${role ?? ''}::${value}`;
+  if (!allowed.has(key) || seen.has(runtimeKey)) throw rejectedError();
+  seen.add(runtimeKey);
+
+  return role !== undefined ? { method, value, role, selector } : { method, value, selector };
+}
+
+const PLAN_KEYS = ['version', 'locators', 'actionTimeoutMs'] as const;
+
+function validateRepairPlan(data: unknown, allowed: Map<string, LocatorTuple>): RepairPlan {
+  if (!isPlainObject(data)) throw rejectedError();
+
+  const keys = Object.keys(data);
+  if (keys.length !== PLAN_KEYS.length || !keys.every((k) => (PLAN_KEYS as readonly string[]).includes(k))) {
+    throw rejectedError();
+  }
+  if (data.version !== 1) throw rejectedError();
+
+  const actionTimeoutMs = data.actionTimeoutMs;
+  if (
+    typeof actionTimeoutMs !== 'number' ||
+    !Number.isInteger(actionTimeoutMs) ||
+    actionTimeoutMs < 30000 ||
+    actionTimeoutMs > 45000
+  ) {
+    throw rejectedError();
+  }
+
+  if (!Array.isArray(data.locators) || data.locators.length > 100) throw rejectedError();
+
+  const seen = new Set<string>();
+  const locators = data.locators.map((item) => validateLocator(item, allowed, seen));
+
+  return { version: 1, locators, actionTimeoutMs };
+}
+
 export async function attemptSelfHeal(
   state: JobState,
-  stepFiles: Array<{ filename: string; content: string }>,
+  artifactDir: string,
   errors: string[],
   signal?: AbortSignal
-): Promise<Array<{ filename: string; content: string }>> {
+): Promise<RepairPlan> {
   const { hash } = state;
 
   await emitEvent(hash, { type: 'status', status: 'self_healing' });
-  await emitEvent(hash, {
-    type: 'llm_log',
-    message: `Self-healing: attempting selector/timeout fixes (errors: ${errors.slice(0, 2).join('; ')})`,
-  });
+  await emitEvent(hash, { type: 'llm_log', message: 'Self-healing: analyzing verification failures…' });
+
+  const intentSpec = await readIntentSpec(artifactDir);
+  const currentPlan = await readCurrentRepairPlan(artifactDir);
+  const allowed = buildAllowedLocators(intentSpec);
 
   const client = buildOpenAIClient(state.llm);
 
-  const systemPrompt = `You are a Playwright test maintainer performing self-healing repairs.
-You may ONLY make these changes:
-- Replace CSS selectors with more stable alternatives (prefer aria-label, role, data-testid)
-- Extend waitForSelector / waitForURL timeouts
-- Replace networkidle waits with explicit element waits
-- Tighten or loosen regex in assertions while preserving business intent
+  const systemPrompt = `You are a Playwright self-healing repair planner.
+Return ONLY a JSON object with this exact shape, no other keys:
+{ "version": 1, "locators": [{ "method": "getByRole" | "getByLabel" | "getByText", "value": string, "role"?: string, "selector": string }], "actionTimeoutMs": number }
 
-You MUST NOT:
-- Change scenario intent or business meaning
-- Remove any assertion (expect() calls)
-- Modify Gherkin step text (it is frozen)
-- Remove test scenarios
-- Omit files you weren't asked to repair — return EVERY input file in the output, unchanged if you made no edits
+Rules:
+- Every locator's method/value/role MUST exactly match one entry from ALLOWED SOURCES below. Do not invent, rename, or remap sources.
+- "role" is present only when method is "getByRole", and must match the role shown for that source.
+- "selector" is plain data handed to a Playwright locator; it is never executed as code. No XPath: no "xpath=" prefix, no "/html[", no leading "/", "..", or "(". Max ${MAX_SELECTOR_LENGTH} characters.
+- actionTimeoutMs MUST be an integer between 30000 and 45000.
+- Return at most 100 locators; never repeat the same source twice.
+- Do NOT return program files, filenames, step code, or any key other than version/locators/actionTimeoutMs.`;
 
-The filename field MUST be a bare basename (e.g. "common.steps.ts"), NEVER a path like "steps/common.steps.ts".
+  const allowedList =
+    [...allowed.values()]
+      .map((t) => (t.role ? `${t.method} "${t.value}" (role: ${t.role})` : `${t.method} "${t.value}"`))
+      .join('\n') || '(none)';
 
-Return ALL provided files as a JSON object: { "files": [{ "filename": string, "content": string }] }`;
+  const userPrompt = `Target URL: ${intentSpec.targetUrl}
 
-  const filesText = stepFiles.map((f) => `=== ${f.filename} ===\n${f.content}`).join('\n\n');
+ALLOWED SOURCES (only these may be repaired):
+${allowedList}
 
-  const response = await client.chat.completions.create({
-    model: state.llm.model,
-    messages: [
-      { role: 'system', content: systemPrompt },
-      {
-        role: 'user',
-        content: `Verification errors:\n${errors.join('\n')}\n\nStep files to repair:\n${filesText}`,
-      },
-    ],
-    response_format: { type: 'json_object' },
-  }, { signal });
+Current repair plan:
+${JSON.stringify(currentPlan)}
+
+Verification errors:
+${safeDiagnostic(errors)}
+
+Return the repaired JSON plan now.`;
+
+  const response = await client.chat.completions.create(
+    {
+      model: state.llm.model,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      response_format: { type: 'json_object' },
+    },
+    { signal }
+  );
 
   const raw = response.choices[0]?.message?.content;
-  if (!raw) throw new Error('Self-heal LLM returned empty content');
 
-  let parsed: { files?: Array<{ filename: string; content: string }> };
+  let parsed: unknown;
   try {
-    parsed = JSON.parse(stripMarkdownJson(raw));
+    parsed = JSON.parse(stripMarkdownJson(raw ?? ''));
   } catch {
-    throw new Error('Self-heal LLM returned invalid JSON');
+    throw rejectedError();
   }
-  if (!Array.isArray(parsed?.files)) {
-    throw new Error('Self-heal LLM returned unexpected structure (missing files array)');
-  }
-  return parsed.files;
+
+  return validateRepairPlan(parsed, allowed);
 }

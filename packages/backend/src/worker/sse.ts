@@ -7,6 +7,7 @@
 
 import type { StreamEvent } from '../types';
 import { appendSseEvent, getSsePublisher, sseChannelForJob } from '../redis';
+import { sanitizeDiagnosticEvent } from '../utils/safeLog';
 
 // Pub/Sub publisher — one shared connection for all workers
 let _publisher: ReturnType<typeof getSsePublisher> | null = null;
@@ -34,11 +35,11 @@ export async function emitEvent(
   const nextId = current + 1;
   jobEventCounters.set(hash, nextId);
 
-  const event = {
+  const event = sanitizeDiagnosticEvent({
     id: nextId,
     ts: Date.now(),
     ...partial,
-  } as StreamEvent;
+  } as StreamEvent);
 
   // Buffer in Redis for replay
   await appendSseEvent(hash, event);

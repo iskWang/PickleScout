@@ -18,6 +18,7 @@ import {
   TERMINAL_STATUSES,
 } from '../redis';
 import type { StreamEvent } from '../types';
+import { sanitizeDiagnosticEvent } from '../utils/safeLog';
 
 export async function streamRoutes(fastify: FastifyInstance): Promise<void> {
   fastify.get<{ Params: { hash: string } }>(
@@ -102,7 +103,7 @@ export async function streamRoutes(fastify: FastifyInstance): Promise<void> {
       const buffered = await getSseEvents(hash, lastSeenId);
       if (closed) return;
       for (const event of buffered) {
-        send(event);
+        send(sanitizeDiagnosticEvent(event));
       }
 
       // Re-check state after subscribing to catch completions that raced the subscribe

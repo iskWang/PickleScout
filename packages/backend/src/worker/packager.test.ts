@@ -1,4 +1,4 @@
-import { readFileSync, existsSync, mkdtempSync, rmSync } from 'fs';
+import { readFileSync, existsSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
 import { join } from 'path';
 import { describe, it, expect, vi } from 'vitest';
 import { tmpdir } from 'os';
@@ -99,8 +99,11 @@ describe('generated workflow installation', () => {
     const storage = mkdtempSync(join(tmpdir(), 'picklescout-packager-'));
     const previousStorage = process.env.STORAGE_DIR;
     process.env.STORAGE_DIR = storage;
+    vi.resetModules();
     try {
-      const { runPackager } = await import('./packager');
+      // Reload after setting STORAGE_DIR; a static import would capture the old environment.
+      const { runPackager, prepareVerificationDir } = await import('./packager');
+      await prepareVerificationDir(join(storage, 'generated', 'workflow-test'));
       const zipPath = await runPackager(
         {
           hash: 'workflow-test',
@@ -116,6 +119,106 @@ describe('generated workflow installation', () => {
         0,
       );
       expect(readZipEntry(zipPath, '.github/workflows/e2e.yml')).toContain('pnpm install --no-frozen-lockfile');
+    } finally {
+      if (previousStorage === undefined) delete process.env.STORAGE_DIR;
+      else process.env.STORAGE_DIR = previousStorage;
+      rmSync(storage, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('repair.json packaging (R2)', () => {
+  it('prepareVerificationDir writes the exact empty repair plan', async () => {
+    const artifactDir = mkdtempSync(join(tmpdir(), 'picklescout-prepare-'));
+    try {
+      // Dynamic import: STORAGE_DIR is read at module load, unused here but kept
+      // consistent with the sibling tests below that require fresh env per test.
+      const { prepareVerificationDir } = await import('./packager');
+      await prepareVerificationDir(artifactDir);
+      const written = readFileSync(join(artifactDir, 'repair.json'), 'utf-8');
+      expect(written).toBe(JSON.stringify({ version: 1, locators: [], actionTimeoutMs: 30000 }));
+    } finally {
+      rmSync(artifactDir, { recursive: true, force: true });
+    }
+  });
+
+  it('runPackager copies the validated repair.json from generated/<hash>/repair.json into the ZIP root, byte-for-byte', async () => {
+    const storage = mkdtempSync(join(tmpdir(), 'picklescout-packager-repair-'));
+    const previousStorage = process.env.STORAGE_DIR;
+    process.env.STORAGE_DIR = storage;
+    vi.resetModules();
+    try {
+      const hash = 'repair-ok-test';
+      const genDir = join(storage, 'generated', hash);
+      mkdirSync(genDir, { recursive: true });
+      const validatedPlan = JSON.stringify({
+        version: 1,
+        locators: [{ method: 'getByRole', value: 'Submit', role: 'button', selector: '[data-testid="submit"]' }],
+        actionTimeoutMs: 45000,
+      });
+      writeFileSync(join(genDir, 'repair.json'), validatedPlan, 'utf-8');
+
+      // Dynamic import: module reads STORAGE_DIR from env at load time, so it
+      // must be imported fresh (after vi.resetModules) per test env value.
+      const { runPackager } = await import('./packager');
+      const zipPath = await runPackager(
+        {
+          hash,
+          llm: { provider: 'test', model: 'test' },
+          tokenUsage: { promptTokens: 0, completionTokens: 0, estimatedCostUSD: 0 },
+        } as unknown as JobState,
+        {
+          featureFiles: [{ filename: 'sample.feature', content: 'Feature: sample\n  Scenario: works\n' }],
+          stepFiles: [{ filename: 'steps.ts', content: 'export {};\n' }],
+        },
+        { jobHash: hash, targetUrl: 'https://example.test', entries: [], inferredJourneys: [] },
+        true,
+        0,
+      );
+
+      // repair.json: exact bytes from storage, not re-serialized or model-named.
+      expect(readZipEntry(zipPath, 'repair.json')).toBe(validatedPlan);
+      // Unrelated packaging behavior (pinned package, scenario content) stays unchanged.
+      expect(readZipEntry(zipPath, 'package.json')).toContain('"picklescout-generated-tests"');
+      expect(readZipEntry(zipPath, 'features/sample.feature')).toContain('Scenario: works');
+    } finally {
+      if (previousStorage === undefined) delete process.env.STORAGE_DIR;
+      else process.env.STORAGE_DIR = previousStorage;
+      rmSync(storage, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects and leaves no completed zip when repair.json is missing (no silent empty substitution)', async () => {
+    const storage = mkdtempSync(join(tmpdir(), 'picklescout-packager-missing-repair-'));
+    const previousStorage = process.env.STORAGE_DIR;
+    process.env.STORAGE_DIR = storage;
+    vi.resetModules();
+    try {
+      const hash = 'repair-missing-test';
+      // Deliberately do NOT create generated/<hash>/repair.json.
+
+      // Dynamic import: module reads STORAGE_DIR from env at load time, so it
+      // must be imported fresh (after vi.resetModules) per test env value.
+      const { runPackager } = await import('./packager');
+      await expect(
+        runPackager(
+          {
+            hash,
+            llm: { provider: 'test', model: 'test' },
+            tokenUsage: { promptTokens: 0, completionTokens: 0, estimatedCostUSD: 0 },
+          } as unknown as JobState,
+          {
+            featureFiles: [{ filename: 'sample.feature', content: 'Feature: sample\n  Scenario: works\n' }],
+            stepFiles: [{ filename: 'steps.ts', content: 'export {};\n' }],
+          },
+          { jobHash: hash, targetUrl: 'https://example.test', entries: [], inferredJourneys: [] },
+          true,
+          0,
+        ),
+      ).rejects.toThrow();
+
+      const zipPath = join(storage, 'outputs', hash, 'result.zip');
+      expect(existsSync(zipPath)).toBe(false);
     } finally {
       if (previousStorage === undefined) delete process.env.STORAGE_DIR;
       else process.env.STORAGE_DIR = previousStorage;

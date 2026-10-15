@@ -23,7 +23,7 @@ import type {
   JobState,
 } from '../types';
 import { normalizeUrl } from '../utils/urlNormalize';
-import { safeLog } from '../utils/safeLog';
+import { safeLog, safeDiagnostic } from '../utils/safeLog';
 
 // ─── Validation Schemas ───────────────────────────────────────────────────────
 
@@ -149,6 +149,7 @@ export async function jobRoutes(fastify: FastifyInstance): Promise<void> {
     return reply.send({
       ...safeState,
       llm: { provider: llm.provider, model: llm.model },
+      error: safeState.error === undefined ? undefined : safeDiagnostic(safeState.error),
     });
   });
 
