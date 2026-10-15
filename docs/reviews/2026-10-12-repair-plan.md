@@ -84,7 +84,7 @@
 - [ ] R4 無 browser 的真實 Gherkin 解析驗收。（不在本輪範圍）
 - [x] 所有變更的 typecheck / lint / tests，含 shared build 前置：2026-10-15 直接以各套件 tsc／eslint／vitest 執行，全部 exit 0；最終 backend 236 passed／5 skipped，frontend 11 passed（main 基準為 backend 134 passed）。
 - [x] 變更後獨立 review 與所有 callsites／測試／文件整合：Terra 第一輪 PARTIALLY AGREE（fill_by_label 修復來源不是實際使用的 locator；自癒固定訊息不在 llm_log 白名單），兩處修正並補測試後重審 AGREE。
-- [ ] 提交、push、開 PR；PR 明列已修／未修／未跑的項目，不以計畫代替成果。
+- [x] 提交、push、開 PR：commit `b01114d`，[PR #5](https://github.com/iskWang/PickleScout/pull/5)；PR 明列已修／未修／未跑的項目。
 
 工具限制：本次 `pnpm --version` 被 bash policy 的 `pnpm *` 規則拒絕；不得透過 wrapper 繞過。獨立 Node/Vitest 執行已成功。完整 repo 指定 pnpm 檢查若仍受阻，需明確揭露，不能聲稱已跑。
 
