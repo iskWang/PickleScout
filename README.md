@@ -293,6 +293,8 @@ docker compose up
 Open [http://localhost:5175](http://localhost:5175).
 The backend API is published at [http://localhost:3100](http://localhost:3100) by default. To use different host ports, set `FRONTEND_PORT` and/or `BACKEND_PORT` in `.env` before starting Compose (for example, `BACKEND_PORT=4100 FRONTEND_PORT=5176 docker compose up`); containers still listen on ports 3000 and 5173.
 
+The backend reads `CORS_ORIGINS` as a comma-separated list of exact browser origins (no spaces or `*`). Compose sets it from `FRONTEND_PORT`. When running the backend directly, an unset value retains the development origins `http://localhost:5173` and `http://frontend:5173`; an empty value allows no cross-origin browser access.
+
 ### Run the generated tests
 
 ```bash

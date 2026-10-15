@@ -25,6 +25,11 @@ import { emitEvent } from './sse';
 
 const STORAGE_DIR = process.env.STORAGE_DIR ?? '/storage';
 
+// Frozen R2 contract: packager writes this exact empty plan once per job; the
+// worker overwrites repair.json with a validated plan on each self-heal round.
+// Key order matches docs/reviews/2026-10-12-repair-plan.md §R2 exactly.
+const EMPTY_REPAIR_PLAN = { version: 1, locators: [] as unknown[], actionTimeoutMs: 30000 };
+
 // Exact-pinned versions — MUST NOT use ^ or ~ (PRD §6.4)
 const PINNED_PACKAGE_JSON = {
   name: 'picklescout-generated-tests',
@@ -75,6 +80,7 @@ export async function prepareVerificationDir(artifactDir: string): Promise<void>
   await Promise.all([
     fs.writeFile(path.join(artifactDir, 'package.json'), JSON.stringify(PINNED_PACKAGE_JSON, null, 2), 'utf-8'),
     fs.writeFile(path.join(artifactDir, 'tsconfig.json'), JSON.stringify(TSCONFIG, null, 2), 'utf-8'),
+    fs.writeFile(path.join(artifactDir, 'repair.json'), JSON.stringify(EMPTY_REPAIR_PLAN), 'utf-8'),
     readTemplate('cucumber.js').then((c) => fs.writeFile(path.join(artifactDir, 'cucumber.js'), c, 'utf-8')),
     readTemplate('world.ts').then((c) => fs.writeFile(path.join(artifactDir, 'support', 'world.ts'), c, 'utf-8')),
     readTemplate('hooks.ts').then((c) => fs.writeFile(path.join(artifactDir, 'support', 'hooks.ts'), c, 'utf-8')),
@@ -142,53 +148,67 @@ async function buildZip(
     return fs.readFile(templatePath, 'utf-8');
   };
 
-  return new Promise((resolve, reject) => {
-    const output = createWriteStream(zipPath);
-    const archive = archiver('zip', { zlib: { level: 9 } });
+  // Read repair.json before creating any stream/archive so a missing or
+  // unreadable repair plan rejects immediately with nothing to close.
+  const repairJsonPath = path.join(STORAGE_DIR, 'generated', state.hash, 'repair.json');
+  const repairJson = await fs.readFile(repairJsonPath);
 
-    output.on('close', resolve);
-    archive.on('error', reject);
-    archive.pipe(output);
-
-    // features/ (basename — LLM may return sub-paths like "features/x.feature")
-    for (const f of artifact.featureFiles) {
-      archive.append(f.content, { name: `features/${path.basename(f.filename)}` });
-    }
-
-    // steps/ (basename — LLM may return sub-paths like "steps/x.ts")
-    for (const s of artifact.stepFiles) {
-      archive.append(s.content, { name: `steps/${path.basename(s.filename)}` });
-    }
-
-    // Async file additions (templates)
-    const addTemplates = async () => {
-      // support/
-      archive.append(await readTemplate('world.ts'), { name: 'support/world.ts' });
-      archive.append(await readTemplate('hooks.ts'), { name: 'support/hooks.ts' });
-
-      // root config files
-      archive.append(await readTemplate('cucumber.js'), { name: 'cucumber.js' });
-      archive.append(await readTemplate('playwright.config.ts'), { name: 'playwright.config.ts' });
-      archive.append(JSON.stringify(PINNED_PACKAGE_JSON, null, 2), { name: 'package.json' });
-      archive.append(JSON.stringify(TSCONFIG, null, 2), { name: 'tsconfig.json' });
-
-      // GitHub Actions
-      archive.append(await readTemplate('github-workflow.yml'), {
-        name: '.github/workflows/e2e.yml',
-      });
-
-      // .env.example
-      archive.append(await readTemplate('env.example'), { name: '.env.example' });
-
-      // README
-      const readme = generateReadme(state, actionLog, artifact);
-      archive.append(readme, { name: 'README.md' });
-
-      archive.finalize();
-    };
-
-    addTemplates().catch(reject);
+  let resolve!: () => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<void>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
   });
+  const output = createWriteStream(zipPath);
+  const archive = archiver('zip', { zlib: { level: 9 } });
+
+  output.on('close', resolve);
+  archive.on('error', reject);
+  archive.pipe(output);
+
+  // features/ (basename — LLM may return sub-paths like "features/x.feature")
+  for (const f of artifact.featureFiles) {
+    archive.append(f.content, { name: `features/${path.basename(f.filename)}` });
+  }
+
+  // steps/ (basename — LLM may return sub-paths like "steps/x.ts")
+  for (const s of artifact.stepFiles) {
+    archive.append(s.content, { name: `steps/${path.basename(s.filename)}` });
+  }
+
+  // Async file additions (templates)
+  const addTemplates = async () => {
+    // support/
+    archive.append(await readTemplate('world.ts'), { name: 'support/world.ts' });
+    archive.append(await readTemplate('hooks.ts'), { name: 'support/hooks.ts' });
+
+    // root config files
+    archive.append(await readTemplate('cucumber.js'), { name: 'cucumber.js' });
+    archive.append(await readTemplate('playwright.config.ts'), { name: 'playwright.config.ts' });
+    archive.append(JSON.stringify(PINNED_PACKAGE_JSON, null, 2), { name: 'package.json' });
+    archive.append(JSON.stringify(TSCONFIG, null, 2), { name: 'tsconfig.json' });
+
+    // Self-heal plan — exact bytes from STORAGE_DIR/generated/<hash>/repair.json,
+    // never a model-supplied filename.
+    archive.append(repairJson, { name: 'repair.json' });
+
+    // GitHub Actions
+    archive.append(await readTemplate('github-workflow.yml'), {
+      name: '.github/workflows/e2e.yml',
+    });
+
+    // .env.example
+    archive.append(await readTemplate('env.example'), { name: '.env.example' });
+
+    // README
+    const readme = generateReadme(state, actionLog, artifact);
+    archive.append(readme, { name: 'README.md' });
+
+    archive.finalize();
+  };
+
+  addTemplates().catch(reject);
+  return promise;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -237,6 +257,7 @@ npm test
 features/     Gherkin .feature files (read-only — edit with caution)
 steps/        TypeScript step definitions
 support/      Cucumber World + hooks
+repair.json   Self-heal locator plan applied by support/world.ts (not user-edited)
 \`\`\`
 
 ## CI/CD

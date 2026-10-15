@@ -9,6 +9,7 @@
 
 import Redis from 'ioredis';
 import type { JobState, StreamEvent } from './types';
+import { safeDiagnostic } from './utils/safeLog';
 
 const TTL_SECONDS = (parseInt(process.env.JOB_TTL_DAYS ?? '7', 10)) * 86_400;
 const SSE_EVENT_BUFFER_MAX = 50;
@@ -23,9 +24,9 @@ function makeClient(maxRetriesPerRequest: number | null): Redis {
     maxRetriesPerRequest,
     lazyConnect: false,
   });
-  client.on('error', (err) => {
+  client.on('error', () => {
     // eslint-disable-next-line no-console
-    console.error('[redis] connection error', err.message);
+    console.error('[redis] connection error');
   });
   return client;
 }
@@ -53,15 +54,18 @@ export const ORPHAN_ERROR        = 'Job queue entry lost unexpectedly — please
 export async function setJobState(state: JobState): Promise<void> {
   const redis = getRedisClient();
   const key = `job:${state.hash}`;
-  // safeLog before any storage that touches credentials
-  await redis.set(key, JSON.stringify(state), 'EX', TTL_SECONDS);
+  // Preserve worker credentials; only diagnostic errors cross this boundary.
+  const error = state.error === undefined ? undefined : safeDiagnostic(state.error);
+  await redis.set(key, JSON.stringify({ ...state, error }), 'EX', TTL_SECONDS);
 }
 
 export async function getJobState(hash: string): Promise<JobState | null> {
   const redis = getRedisClient();
   const raw = await redis.get(`job:${hash}`);
   if (!raw) return null;
-  return JSON.parse(raw) as JobState;
+  const state = JSON.parse(raw) as JobState;
+  if (state.error !== undefined) state.error = safeDiagnostic(state.error);
+  return state;
 }
 
 export async function updateJobStatus(
@@ -82,6 +86,7 @@ export async function updateJobStatus(
     ? { ...patch, status }
     : patch;
   const updated: JobState = { ...current, ...effectivePatch, updatedAt: Date.now() };
+  if (updated.error !== undefined) updated.error = safeDiagnostic(updated.error);
   await setJobState(updated);
   return updated;
 }
