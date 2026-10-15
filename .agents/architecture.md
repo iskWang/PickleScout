@@ -48,6 +48,7 @@ PickleScout separates the **Generation** of tests from their **Execution**.
 | `backend-style.md` | Backend coding conventions |
 | `frontend-style.md` | Frontend coding conventions |
 | `react-patterns.md` | React component patterns |
+| `language-policy.md` | Language rules for docs, code, GitHub, and agent replies |
 | `self-test.md` | End-to-end pipeline self-test — run after any worker/packager/template change |
 | `specs/api-contract.md` | API contract |
 | `specs/auth-flow.md` | Auth flow |

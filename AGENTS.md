@@ -46,6 +46,7 @@ pnpm --filter @picklescout/shared build  # build shared types (required before t
 - Redis keys MUST follow the job:{hash} prefix convention
 - PRD Alignment: Field names and event types MUST strictly match `docs/PRD.md`
 - Browser Hygiene: Every Stagehand/Playwright instance MUST be explicitly closed in a `finally` block to prevent resource leaks
+- Language: English for all docs, code, comments, logs, commits, PRs, and issues; reply to the user in their language. Full policy: `.agents/language-policy.md`
 
 ## Definition of Done
 Before declaring a task complete, the Agent MUST:

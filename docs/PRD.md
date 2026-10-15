@@ -1150,23 +1150,16 @@ PickleScout follows the **AGENTS.md open standard** (maintained by the Agentic A
 
 | Tool | File read | Approach |
 |------|-----------|----------|
-| Claude Code | `CLAUDE.md` | Symlink → `AGENTS.md` |
+| Claude Code | — | Not configured (no `CLAUDE.md`) |
 | OpenAI Codex | `AGENTS.md` | Root file |
 | GitHub Copilot | `AGENTS.md` | Root file |
 | Cursor | `.cursorrules` | Out of scope for this project |
-
-**Setup** (run once after cloning):
-
-```bash
-ln -s AGENTS.md CLAUDE.md
-```
 
 ### D.2 File Structure
 
 ```
 picklescout/
 ├── AGENTS.md                    # Root: max 100 lines, commands + core rules + pointers
-├── CLAUDE.md                    # Symlink: ln -s AGENTS.md CLAUDE.md
 │
 ├── .agents/
 │   ├── architecture.md          # Two-phase design, service boundaries, data flow
