@@ -1222,12 +1222,12 @@ Architecture overview: .agents/architecture.md
 ## Commands
 ```bash
 docker compose up             # start all services
-cd frontend && pnpm dev       # Vite dev server
-cd backend && pnpm dev        # ts-node-dev watch
+bun run dev:frontend       # Vite dev server
+bun run dev:backend        # ts-node-dev watch
 
-pnpm lint                     # ESLint
-pnpm typecheck                # tsc --noEmit (run before committing)
-pnpm test                     # unit tests
+bun run lint                     # ESLint
+bun run typecheck                # tsc --noEmit (run before committing)
+bun run test                     # unit tests
 ```
 
 ## Absolute Constraints
@@ -1244,7 +1244,7 @@ Always (no confirmation needed):
 - Run a single unit test
 
 Ask first:
-- pnpm add / pnpm install or adding any dependency
+- bun add / bun install or adding any dependency
 - docker compose up / down / restart
 - Any Redis data deletion
 
@@ -1283,8 +1283,8 @@ Never:
 
 | Trigger | Required action |
 |---------|----------------|
-| New pnpm dependency added | Update stack version in root `AGENTS.md` |
-| New pnpm script added | Add to Commands section |
+| New Bun dependency added | Update stack version in root `AGENTS.md` |
+| New Bun script added | Add to Commands section |
 | API contract changed | Update `.agents/specs/api-contract.md` |
 | New coding convention adopted | Update relevant `.agents/*.md` |
 | New canonical pattern established | Update `.agents/templates/` |

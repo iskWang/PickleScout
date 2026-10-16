@@ -124,7 +124,7 @@ sequenceDiagram
     W->>W: Assemble step files from IntentSpec + template catalog
 
     W->>R: SET status=verifying
-    W->>W: pnpm install + cucumber-js
+    W->>W: npm install + cucumber-js
     alt tests pass
         W->>W: zip artifacts
         W->>R: SET status=completed
@@ -351,23 +351,26 @@ See [`.agents/self-test.md`](.agents/self-test.md) for assertion semantics and f
 ## Development
 
 ```bash
+# Node 20 + Bun 1.3.14; Bun manages packages, Node runs tools/services.
+bun install --frozen-lockfile
+
 # Start all services
 docker compose up
 
 # Frontend only (hot-reload)
-pnpm dev:frontend
+bun run dev:frontend
 
 # Backend only (ts-node-dev watch)
-pnpm dev:backend
+bun run dev:backend
 
 # Typecheck all workspaces
-pnpm -r typecheck
+bun run typecheck
 
 # Lint
-pnpm -r lint
+bun run lint
 
 # Unit tests
-pnpm -r test
+bun run test
 ```
 
 ### Monorepo layout

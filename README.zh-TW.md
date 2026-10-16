@@ -124,7 +124,7 @@ sequenceDiagram
     W->>W: 從 IntentSpec + 模板目錄組裝步驟檔
 
     W->>R: SET status=verifying
-    W->>W: pnpm install + cucumber-js
+    W->>W: npm install + cucumber-js
     alt 測試通過
         W->>W: 打包 zip
         W->>R: SET status=completed
@@ -230,23 +230,26 @@ npm test
 ## 開發
 
 ```bash
+# Node 20 + Bun 1.3.14; Bun manages packages, Node runs tools/services.
+bun install --frozen-lockfile
+
 # 啟動所有服務
 docker compose up
 
 # 前端（熱重載）
-pnpm dev:frontend
+bun run dev:frontend
 
 # 後端（ts-node-dev watch）
-pnpm dev:backend
+bun run dev:backend
 
 # 所有 workspace typecheck
-pnpm -r typecheck
+bun run typecheck
 
 # Lint
-pnpm -r lint
+bun run lint
 
 # 單元測試
-pnpm -r test
+bun run test
 ```
 
 ### Monorepo 結構

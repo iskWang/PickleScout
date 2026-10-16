@@ -59,7 +59,7 @@ The script prints `✅ PASS` or `❌ FAIL (N assertion(s) failed)` and exits 0/1
 | Symptom | Likely cause | File to check |
 |---|---|---|
 | `ENOENT: ... dist/templates/*.template` | tsc didn't copy templates | `packages/backend/package.json` build script |
-| `pnpm install failed (exit 1): ERR_PNPM_NO_MATCHING_VERSION` | Pinned version doesn't exist on npm | `packages/backend/src/worker/packager.ts` `PINNED_PACKAGE_JSON` |
+| `Dependency installation failed.` | Pinned version doesn't exist on npm | `packages/backend/src/worker/packager.ts` `PINNED_PACKAGE_JSON` |
 | `browserType.launch: Executable doesn't exist` | `PLAYWRIGHT_BROWSERS_PATH` override pointing to empty dir | `packages/backend/src/worker/verifier.ts` spawn env |
 | `ENOENT: ... steps/*.ts` | LLM returned a filename with sub-path; writer didn't `path.basename` | `packages/backend/src/worker/index.ts` self-heal write loop |
 | `Result file not found` on download | Route handler didn't fallback between `result.zip` ↔ `result_unverified.zip` | `packages/backend/src/routes/result.ts` |

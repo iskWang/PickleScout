@@ -202,8 +202,8 @@ Legend: ✅ Done · ⚠️ Partial · ❌ Not started
 
 | Item | Status | Notes |
 |------|--------|-------|
-| vitest in backend | ✅ | 5 safeLog tests pass; `pnpm test` exits 0 |
-| vitest in frontend | ✅ | 5 RecentJobs tests (jsdom); `pnpm test` exits 0 |
+| vitest in backend | ✅ | 5 safeLog tests pass; `bun run test` exits 0 |
+| vitest in frontend | ✅ | 5 RecentJobs tests (jsdom); `bun run test` exits 0 |
 | frontend `.eslintrc.json` | ✅ | Was missing; added with react-hooks plugin |
 | Docker smoke-test script | ✅ | `scripts/smoke-test.sh` — syntax-valid, executable; live run requires Docker |
 
@@ -235,9 +235,9 @@ Legend: ✅ Done · ⚠️ Partial · ❌ Not started
 
 | Item | Status | Notes |
 |------|--------|-------|
-| Root `pnpm-workspace.yaml` + `package.json` | ✅ | Single lockfile at repo root |
+| Root `package.json` workspaces | ✅ | Single lockfile at repo root |
 | `packages/shared` (`@picklescout/shared`) | ✅ | All shared types migrated; `dist/index.d.ts` generated |
 | `packages/frontend` / `packages/backend` | ✅ | Moved into `packages/`; full monorepo structure |
 | Type extraction — no duplicates | ✅ | `JobStatus`, `StreamEvent`, `LLMConfig`, etc. in shared only |
 | Docker builds updated | ✅ | Both Dockerfiles build from repo root; `packages/` paths throughout |
-| AGENTS.md / CLAUDE.md updated | ✅ | Commands use `pnpm -r *` and `pnpm dev:frontend/backend` |
+| AGENTS.md / CLAUDE.md updated | ✅ | Commands use `bun run *` and `bun run dev:frontend/backend` |

@@ -15,7 +15,7 @@
  *   text, remapping an assertion's source to an action locator.
  */
 
-import { spawn } from 'child_process';
+import { spawn, type SpawnOptionsWithoutStdio } from 'child_process';
 import path from 'path';
 import fs from 'fs/promises';
 import type { JobState, StepResolutionResult, VerificationMode, IntentSpec } from '../types';
@@ -52,6 +52,31 @@ export async function runVerifier(
   }
 }
 
+// npm launches tools through another process. Keep that process tree in its own
+// group so abort/timeout cannot leave Cucumber or Chromium running after npm exits.
+function spawnNpm(args: string[], options: SpawnOptionsWithoutStdio) {
+  const grouped = process.platform !== 'win32';
+  const child = spawn('npm', args, { ...options, detached: grouped });
+  const cleanup = () => {
+    if (!grouped || !child.pid) return;
+    try {
+      process.kill(-child.pid, 'SIGKILL');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
+    }
+  };
+  child.once('error', cleanup);
+  child.once('exit', cleanup);
+  return child;
+}
+
+// An explicit local path bypasses npm's package acquisition / cache fallback.
+async function localTool(artifactDir: string, name: string): Promise<string> {
+  const executable = path.resolve(artifactDir, 'node_modules', '.bin', name);
+  await fs.access(executable);
+  return executable;
+}
+
 // ─── Shared: ensure node_modules exist in artifactDir ────────────────────────
 
 async function ensureInstalled(artifactDir: string, signal?: AbortSignal): Promise<void> {
@@ -62,7 +87,7 @@ async function ensureInstalled(artifactDir: string, signal?: AbortSignal): Promi
   if (exists) return;
 
   await new Promise<void>((resolve, reject) => {
-    const install = spawn('pnpm', ['install', '--ignore-scripts'], {
+    const install = spawnNpm(['install', '--ignore-scripts'], {
       cwd: artifactDir,
       timeout: 120_000,
       signal,
@@ -82,10 +107,10 @@ async function runSyntaxCheck(hash: string, artifactDir: string, signal?: AbortS
   await ensureInstalled(artifactDir, signal);
   await emitEvent(hash, { type: 'llm_log', message: 'Syntax check: compiling TypeScript…' });
 
+  const executable = await localTool(artifactDir, 'tsc');
   return new Promise((resolve, reject) => {
-    const proc = spawn(
-      'pnpm',
-      ['exec', 'tsc', '--noEmit', '--strict', '--target', 'ES2022', '--module', 'commonjs'],
+    const proc = spawnNpm(
+      ['exec', '--offline', '--no', '--', executable, '--noEmit', '--strict', '--target', 'ES2022', '--module', 'commonjs'],
       {
         cwd: artifactDir,
         env: process.env,
@@ -133,11 +158,11 @@ async function runCucumberSmoke(
 }
 
 async function spawnCucumber(hash: string, artifactDir: string, signal?: AbortSignal): Promise<Pick<VerificationResult, 'passed' | 'errors'>> {
+  const executable = await localTool(artifactDir, 'cucumber-js');
   return new Promise((resolve, reject) => {
     const resultPath = `/tmp/cucumber-result-${hash}.json`;
-    const proc = spawn(
-      'pnpm',
-      ['exec', 'cucumber-js', '--format', `json:${resultPath}`, '--format', 'progress'],
+    const proc = spawnNpm(
+      ['exec', '--offline', '--no', '--', executable, '--format', `json:${resultPath}`, '--format', 'progress'],
       {
         cwd: artifactDir,
         env: process.env,
