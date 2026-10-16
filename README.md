@@ -373,6 +373,8 @@ bun run lint
 bun run test
 ```
 
+For active verifier jobs, finish or cancel the job before stopping or reloading the backend dev server. Detached verifier processes may otherwise remain; see [process cleanup limits](.agents/self-test.md#verifier-process-cleanup-limits-m1).
+
 ### Monorepo layout
 
 ```

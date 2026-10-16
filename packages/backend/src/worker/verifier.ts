@@ -62,7 +62,12 @@ function spawnNpm(args: string[], options: SpawnOptionsWithoutStdio) {
     try {
       process.kill(-child.pid, 'SIGKILL');
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
+      if ((error as NodeJS.ErrnoException).code !== 'ESRCH') {
+        // Cleanup is best-effort: an event listener must not crash the worker.
+        // Keep raw OS errors (which may contain job data) out of logs.
+        // eslint-disable-next-line no-console
+        console.warn('Verifier process-group cleanup failed; child processes may remain.');
+      }
     }
   };
   child.once('error', cleanup);
