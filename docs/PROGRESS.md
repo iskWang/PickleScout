@@ -229,6 +229,8 @@ Legend: ✅ Done · ⚠️ Partial · ❌ Not started
 
 **Resolved in M1:** the verifier now runs local `npm`/`node` tools (no `bun`/`bunx`); see `docs/reviews/2026-10-16-m1-bun.md`.
 
+**M2 follow-ups from the M1 review:** parent-shutdown propagation for detached verifier process groups, bounded SIGKILL escalation on timeout, and `init: true` for the backend Compose service (see `.agents/self-test.md`).
+
 ---
 
 ## pnpm Workspace / Monorepo (Milestone A — Done)
