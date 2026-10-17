@@ -20,7 +20,7 @@
 # Requires: docker, jq, curl, unzip. Backend + Redis must already be running.
 set -euo pipefail
 
-API="${API:-http://localhost:3000}"
+API="${API:-http://localhost:3100}"
 TIMEOUT_SEC="${TIMEOUT_SEC:-900}"
 POLL_INTERVAL=3
 OUT_DIR="$(dirname "$0")/../.self-test-output"

@@ -8,12 +8,12 @@
 #   OPENROUTER_API_KEY=sk-... ./scripts/phase0-validate.sh
 #
 # Optional env vars:
-#   API_BASE      (default: http://localhost:3000)
+#   API_BASE      (default: http://localhost:3100)
 #   TARGET_URL    (default: https://demo.odoo.com)
 #   MAX_WAIT_SEC  (default: 1200 — 20 minutes)
 set -euo pipefail
 
-API_BASE="${API_BASE:-http://localhost:3000}"
+API_BASE="${API_BASE:-http://localhost:3100}"
 TARGET_URL="${TARGET_URL:-https://demo.odoo.com}"
 MAX_WAIT_SEC="${MAX_WAIT_SEC:-1200}"
 MAX_SCENARIOS="${MAX_SCENARIOS:-3}"
