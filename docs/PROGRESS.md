@@ -231,6 +231,8 @@ Legend: ✅ Done · ⚠️ Partial · ❌ Not started
 
 **M2 follow-ups from the M1 review:** parent-shutdown propagation for detached verifier process groups, bounded SIGKILL escalation on timeout, and `init: true` for the backend Compose service (see `.agents/self-test.md`).
 
+**Backlog (not assigned to a milestone):** generated `Then` assertions sometimes use descriptive text that is not on the page (observed in 2 of 3 real saucedemo.com jobs during M1 acceptance), failing verification. Constrain the generator so `Then` uses text actually present in the explored page.
+
 ---
 
 ## pnpm Workspace / Monorepo (Milestone A — Done)
