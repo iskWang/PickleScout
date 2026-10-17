@@ -132,6 +132,45 @@ const VALID_PLAN = {
 const INVALID_REPAIR_PLAN_MESSAGE = 'Invalid repair plan: repair.json failed validation.';
 
 describe('generated support/world.ts — repair adapter', () => {
+  it('typechecks the real template with the generated-project compiler options', () => {
+    const worldPath = join(__dirname, 'world.ts');
+    const typesPath = join(__dirname, 'world-dependencies.d.ts');
+    // Cucumber is generated-project-only; use installed Playwright and Node types.
+    const dependencyTypes = `
+      declare module '@cucumber/cucumber' {
+        export interface IWorldOptions { parameters: unknown; }
+        export class World { constructor(options: IWorldOptions); }
+        export function setWorldConstructor(world: typeof World): void;
+      }
+      declare module '@playwright/test' {
+        export type { Browser, BrowserContext, Page } from 'playwright-core';
+      }
+    `;
+    // Mirrors packager.ts TSCONFIG; noEmit keeps compilation in memory.
+    const options: ts.CompilerOptions = {
+      target: ts.ScriptTarget.ES2022,
+      module: ts.ModuleKind.CommonJS,
+      lib: ['lib.es2022.d.ts'],
+      strict: true,
+      esModuleInterop: true,
+      skipLibCheck: true,
+      resolveJsonModule: true,
+      noEmit: true,
+    };
+    const host = ts.createCompilerHost(options);
+    const getSourceFile = host.getSourceFile.bind(host);
+    host.getSourceFile = (fileName, languageVersion, onError, shouldCreateNewSourceFile) => {
+      if (fileName === worldPath) return ts.createSourceFile(fileName, templateSource, languageVersion);
+      if (fileName === typesPath) return ts.createSourceFile(fileName, dependencyTypes, languageVersion);
+      return getSourceFile(fileName, languageVersion, onError, shouldCreateNewSourceFile);
+    };
+    const program = ts.createProgram([worldPath, typesPath], options, host);
+    expect(ts.version).toBe('5.5.4');
+    expect(ts.getPreEmitDiagnostics(program).map((diagnostic) =>
+      ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'),
+    )).toEqual([]);
+  });
+
   it('routes a matching getByRole source to the real locator for the repaired selector', () => {
     const CustomWorld = loadCustomWorld(JSON.stringify(VALID_PLAN));
     const world = new CustomWorld({});
