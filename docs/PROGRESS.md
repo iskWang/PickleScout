@@ -227,7 +227,7 @@ Legend: ✅ Done · ⚠️ Partial · ❌ Not started
 
 **Root cause:** `verifier.ts` invokes `bun` (or `bunx`) to run cucumber-js inside the artifact. Docker image is Node.js-based (`node:20-slim`); `bun` is not installed.
 
-**Next fix needed:** Replace `bun`/`bunx` calls in `verifier.ts` with `node`/`npx` (or install bun in the Dockerfile).
+**Resolved in M1:** the verifier now runs local `npm`/`node` tools (no `bun`/`bunx`); see `docs/reviews/2026-10-16-m1-bun.md`.
 
 ---
 
