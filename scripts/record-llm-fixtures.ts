@@ -1,6 +1,6 @@
 /*
 Run manually:
-  OPENROUTER_API_KEY=... pnpm exec ts-node scripts/record-llm-fixtures.ts
+  OPENROUTER_API_KEY=... node -r ./packages/backend/node_modules/ts-node/register scripts/record-llm-fixtures.ts
 
 If you prefer a loader-based runner:
   OPENROUTER_API_KEY=... node --import ts-node/register scripts/record-llm-fixtures.ts

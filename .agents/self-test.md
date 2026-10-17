@@ -59,7 +59,7 @@ The script prints `✅ PASS` or `❌ FAIL (N assertion(s) failed)` and exits 0/1
 | Symptom | Likely cause | File to check |
 |---|---|---|
 | `ENOENT: ... dist/templates/*.template` | tsc didn't copy templates | `packages/backend/package.json` build script |
-| `pnpm install failed (exit 1): ERR_PNPM_NO_MATCHING_VERSION` | Pinned version doesn't exist on npm | `packages/backend/src/worker/packager.ts` `PINNED_PACKAGE_JSON` |
+| `Dependency installation failed.` | Pinned version doesn't exist on npm | `packages/backend/src/worker/packager.ts` `PINNED_PACKAGE_JSON` |
 | `browserType.launch: Executable doesn't exist` | `PLAYWRIGHT_BROWSERS_PATH` override pointing to empty dir | `packages/backend/src/worker/verifier.ts` spawn env |
 | `ENOENT: ... steps/*.ts` | LLM returned a filename with sub-path; writer didn't `path.basename` | `packages/backend/src/worker/index.ts` self-heal write loop |
 | `Result file not found` on download | Route handler didn't fallback between `result.zip` ↔ `result_unverified.zip` | `packages/backend/src/routes/result.ts` |
@@ -88,3 +88,21 @@ To add a new mode (e.g., `auth-form` for a site with a known login that explorat
 3. Add an assertion block under `Mode-specific assertions` describing what "pass" means
 4. Add the mode to the `all` fan-out section
 5. Update the table in this file
+
+## Verifier process cleanup limits (M1)
+
+The npm verifier runs in a separate POSIX process group. AbortSignal and npm
+exit/error trigger group cleanup, but **parent-process shutdown does not**.
+During `bun run dev:backend`, Ctrl+C or a ts-node-dev file-change restart can
+therefore leave npm, Cucumber or Chromium running. Finish or cancel the active
+job and confirm verification has stopped before stopping/reloading the dev
+server. If the parent has already died, inspect `ps -eo pid,ppid,pgid,args` and
+clean up only the processes belonging to that verifier run; do not broadly kill
+Node or Chromium processes. SIGKILL of the parent cannot run cleanup handlers.
+
+Timeout currently sends SIGTERM to npm; group cleanup then depends on npm
+exiting. A signal-resistant npm process has no independent forced-kill deadline.
+Cleanup permission failures are logged without raw diagnostics and may also
+leave children running. Parent shutdown handling and bounded escalation belong
+to the separately scoped M2 shutdown work. The disposable integration check
+uses `docker run --init`; the Compose file does not currently enable `init`.

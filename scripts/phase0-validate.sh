@@ -143,10 +143,10 @@ echo "[phase0] running cucumber-js --dry-run inside artifact..."
 cd "$OUT_DIR"
 
 # Install deps in isolation — no scripts to avoid playwright binary download
-pnpm install --ignore-scripts 2>&1 | tail -5
+npm install --ignore-scripts 2>&1 | tail -5
 
 # Dry-run: parse-only, exercises step resolution without a browser
-pnpm exec cucumber-js --dry-run
+npm exec --offline --no -- ./node_modules/.bin/cucumber-js --dry-run
 echo "[phase0] cucumber-js --dry-run: PASS"
 
 echo ""

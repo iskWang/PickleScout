@@ -202,8 +202,8 @@ Legend: ✅ Done · ⚠️ Partial · ❌ Not started
 
 | Item | Status | Notes |
 |------|--------|-------|
-| vitest in backend | ✅ | 5 safeLog tests pass; `pnpm test` exits 0 |
-| vitest in frontend | ✅ | 5 RecentJobs tests (jsdom); `pnpm test` exits 0 |
+| vitest in backend | ✅ | 5 safeLog tests pass; `bun run test` exits 0 |
+| vitest in frontend | ✅ | 5 RecentJobs tests (jsdom); `bun run test` exits 0 |
 | frontend `.eslintrc.json` | ✅ | Was missing; added with react-hooks plugin |
 | Docker smoke-test script | ✅ | `scripts/smoke-test.sh` — syntax-valid, executable; live run requires Docker |
 
@@ -227,7 +227,11 @@ Legend: ✅ Done · ⚠️ Partial · ❌ Not started
 
 **Root cause:** `verifier.ts` invokes `bun` (or `bunx`) to run cucumber-js inside the artifact. Docker image is Node.js-based (`node:20-slim`); `bun` is not installed.
 
-**Next fix needed:** Replace `bun`/`bunx` calls in `verifier.ts` with `node`/`npx` (or install bun in the Dockerfile).
+**Resolved in M1:** the verifier now runs local `npm`/`node` tools (no `bun`/`bunx`); see `docs/reviews/2026-10-16-m1-bun.md`.
+
+**M2 follow-ups from the M1 review:** parent-shutdown propagation for detached verifier process groups, bounded SIGKILL escalation on timeout, and `init: true` for the backend Compose service (see `.agents/self-test.md`).
+
+**Backlog (not assigned to a milestone):** generated `Then` assertions sometimes use descriptive text that is not on the page (observed in 2 of 3 real saucedemo.com jobs during M1 acceptance), failing verification. Constrain the generator so `Then` uses text actually present in the explored page.
 
 ---
 
@@ -235,9 +239,9 @@ Legend: ✅ Done · ⚠️ Partial · ❌ Not started
 
 | Item | Status | Notes |
 |------|--------|-------|
-| Root `pnpm-workspace.yaml` + `package.json` | ✅ | Single lockfile at repo root |
+| Root `package.json` workspaces | ✅ | Single lockfile at repo root |
 | `packages/shared` (`@picklescout/shared`) | ✅ | All shared types migrated; `dist/index.d.ts` generated |
 | `packages/frontend` / `packages/backend` | ✅ | Moved into `packages/`; full monorepo structure |
 | Type extraction — no duplicates | ✅ | `JobStatus`, `StreamEvent`, `LLMConfig`, etc. in shared only |
 | Docker builds updated | ✅ | Both Dockerfiles build from repo root; `packages/` paths throughout |
-| AGENTS.md / CLAUDE.md updated | ✅ | Commands use `pnpm -r *` and `pnpm dev:frontend/backend` |
+| AGENTS.md / CLAUDE.md updated | ✅ | Commands use `bun run *` and `bun run dev:frontend/backend` |

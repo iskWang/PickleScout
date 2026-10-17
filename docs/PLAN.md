@@ -20,8 +20,8 @@ You are an implementation agent (Sonnet, Opus, or similar). Your job:
 Before marking ANY task `[x]`, all of these must hold:
 
 ```bash
-cd backend  && pnpm typecheck && pnpm lint    # backend gates
-cd frontend && pnpm typecheck && pnpm lint    # frontend gates
+cd packages/backend  && bun run typecheck && bun run lint    # backend gates
+cd packages/frontend && bun run typecheck && bun run lint    # frontend gates
 # Plus: every command in the task's Verify: block exits 0
 ```
 
@@ -42,17 +42,17 @@ If you cannot make the verify commands pass, mark the task `[!]` with a one-line
 These enable verification for every later task. Skip at your peril — verify steps below assume vitest is installed.
 
 ### [x] Z1: Add vitest to backend
-- **Goal**: `pnpm test` runs unit tests; CI-friendly exit codes.
+- **Goal**: `bun run test` runs unit tests; CI-friendly exit codes.
 - **Files**:
   - Modify `backend/package.json`: add `"test": "vitest run"`, `"test:watch": "vitest"` scripts; add `vitest@^2.1.0` and `@vitest/coverage-v8` to devDependencies.
   - Create `backend/vitest.config.ts` with `test.environment = 'node'`, `test.include = ['src/**/*.test.ts']`.
   - Create `backend/src/utils/safeLog.test.ts` — at least 3 cases (apiKey redacted, nested auth.password redacted, non-sensitive field preserved).
 - **Verify**:
   ```bash
-  cd backend && pnpm install && pnpm test 2>&1 | grep -E '(PASS|FAIL|passed)'
-  cd backend && pnpm test 2>&1 | grep -q 'safeLog' && echo "safeLog tested"
+  cd packages/backend && bun install && bun run test 2>&1 | grep -E '(PASS|FAIL|passed)'
+  cd packages/backend && bun run test 2>&1 | grep -q 'safeLog' && echo "safeLog tested"
   ```
-- **Done when**: at least 3 safeLog tests pass; `pnpm test` exits 0.
+- **Done when**: at least 3 safeLog tests pass; `bun run test` exits 0.
 
 ### [x] Z2: Add vitest to frontend
 - **Goal**: same as Z1 but frontend; jsdom environment for React.
@@ -62,8 +62,8 @@ These enable verification for every later task. Skip at your peril — verify st
   - Create `frontend/src/components/RecentJobs/RecentJobs.test.tsx` — at least 2 cases (saveRecentJob then loadRecentJobs returns it; removeRecentJob removes by hash).
 - **Verify**:
   ```bash
-  cd frontend && pnpm install && pnpm test 2>&1 | grep -E '(PASS|FAIL|passed)'
-  cd frontend && pnpm test 2>&1 | grep -q 'RecentJobs' && echo "RecentJobs tested"
+  cd packages/frontend && bun install && bun run test 2>&1 | grep -E '(PASS|FAIL|passed)'
+  cd packages/frontend && bun run test 2>&1 | grep -q 'RecentJobs' && echo "RecentJobs tested"
   ```
 - **Done when**: ≥2 RecentJobs tests pass; exit 0.
 
@@ -93,43 +93,15 @@ These enable verification for every later task. Skip at your peril — verify st
 > Eliminates the frontend↔backend type drift that has caused several bugs (e.g. JobStatus, StreamEvent, JobOptions defined twice and going out of sync).
 
 ### [x] A1: Initialize workspace root
-- **Goal**: `pnpm-workspace.yaml` + root `package.json` orchestrate both apps and the shared package.
-- **Files**:
-  - Create `pnpm-workspace.yaml`:
-    ```yaml
-    packages:
-      - 'frontend'
-      - 'backend'
-      - 'packages/*'
-    ```
-  - Create root `package.json`:
-    ```json
-    {
-      "name": "picklescout",
-      "private": true,
-      "scripts": {
-        "typecheck": "pnpm -r typecheck",
-        "lint":      "pnpm -r lint",
-        "test":      "pnpm -r test",
-        "build":     "pnpm -r build",
-        "dev:backend":  "pnpm --filter @picklescout/backend  dev",
-        "dev:frontend": "pnpm --filter @picklescout/frontend dev"
-      },
-      "engines": { "node": ">=20", "pnpm": ">=9" },
-      "packageManager": "pnpm@9.0.0"
-    }
-    ```
-  - Rename `frontend/package.json` `"name"` → `"@picklescout/frontend"`.
-  - Rename `backend/package.json` `"name"` → `"@picklescout/backend"`.
-  - Delete `frontend/pnpm-lock.yaml` and `backend/pnpm-lock.yaml`. Run `pnpm install` at repo root to generate a single root lockfile.
+- **Goal**: root `package.json` workspaces orchestrate both apps and shared types.
+- **Current setup (M1)**: `workspaces: ["packages/*"]`, `bun.lock`, Node 20, Bun 1.3.14. Root scripts build shared first, then use Bun filters to run workspace scripts on Node. See the root `package.json` for the executable definitions.
 - **Verify**:
   ```bash
-  test -f pnpm-workspace.yaml && test -f package.json && echo "workspace files ok"
-  test -f pnpm-lock.yaml && test ! -f frontend/pnpm-lock.yaml && test ! -f backend/pnpm-lock.yaml && echo "single lockfile"
-  pnpm -r typecheck
-  pnpm -r lint
+  bun install --frozen-lockfile
+  bun run typecheck
+  bun run lint
   ```
-- **Done when**: single root lockfile; `pnpm -r typecheck` exits 0.
+- **Done when**: one root lockfile; the workspace checks exit 0.
 
 ### [x] A2: Create `@picklescout/shared` package
 - **Goal**: one package owning all types used by BOTH frontend and backend.
@@ -171,9 +143,9 @@ These enable verification for every later task. Skip at your peril — verify st
   - Create `packages/shared/src/index.ts` — re-exports from `./types`.
 - **Verify**:
   ```bash
-  cd packages/shared && pnpm build && test -f dist/index.d.ts && echo "shared builds"
+  cd packages/shared && bun run build && test -f dist/index.d.ts && echo "shared builds"
   ```
-- **Done when**: `pnpm --filter @picklescout/shared build` succeeds and produces `dist/index.d.ts`.
+- **Done when**: `bun run --filter @picklescout/shared build` succeeds and produces `dist/index.d.ts`.
 
 ### [x] A3: Extract shared types
 - **Goal**: types defined in BOTH `frontend/src/types.ts` AND `backend/src/types.ts` move to `@picklescout/shared`. Frontend and backend re-export or import from shared.
@@ -182,25 +154,25 @@ These enable verification for every later task. Skip at your peril — verify st
   - Move each into `packages/shared/src/types.ts` (single source).
   - Replace duplicate definitions in `frontend/src/types.ts` and `backend/src/types.ts` with `export * from '@picklescout/shared';` or selective re-exports.
   - Add `"@picklescout/shared": "workspace:*"` to BOTH `frontend/package.json` and `backend/package.json` dependencies.
-  - Run `pnpm install` at root.
+  - Run `bun install` at root.
 - **Verify**:
   ```bash
   # No type is defined in two places anymore:
   grep -l "^export interface JobStatus\|^export type JobStatus" frontend/src backend/src -r 2>/dev/null | wc -l    # expect 0
   grep -l "^export interface StreamEvent\b\|^export type StreamEvent\b" frontend/src backend/src -r 2>/dev/null | wc -l  # expect 0
-  pnpm -r typecheck
+  bun run typecheck
   ```
-- **Done when**: every previously-duplicated type lives only in `packages/shared/src/types.ts`; `pnpm -r typecheck` exits 0.
+- **Done when**: every previously-duplicated type lives only in `packages/shared/src/types.ts`; `bun run typecheck` exits 0.
 
 ### [x] A4: Update Docker builds for workspace
 - **Goal**: `docker compose up --build` still works. Each service builds with the workspace context so it sees `packages/shared`.
 - **Files**:
   - Modify `docker-compose.yml`: change `build.context` for both `frontend` and `backend` from `./frontend` / `./backend` to `.` (repo root); add `build.dockerfile: frontend/Dockerfile` (and same for backend).
   - Modify `frontend/Dockerfile`:
-    - Copy `pnpm-workspace.yaml`, root `package.json`, `pnpm-lock.yaml`, `frontend/package.json`, `packages/shared/package.json` first (for cache).
-    - `RUN pnpm install --frozen-lockfile --filter @picklescout/frontend...` (the `...` includes deps).
+    - Copy root `package.json`, `bun.lock`, `frontend/package.json`, `packages/shared/package.json` first (for cache).
+    - `RUN bun install --frozen-lockfile --filter @picklescout/frontend --filter @picklescout/shared` (explicit service and shared selection).
     - Then `COPY frontend ./frontend && COPY packages ./packages`.
-    - Build with `pnpm --filter @picklescout/frontend build`.
+    - Build with `bun run --filter @picklescout/frontend build`.
   - Modify `backend/Dockerfile`: same shape; preserve the playwright install + entrypoint additions.
   - Update `.dockerignore` at repo root if it exists; ensure `node_modules/` is excluded.
 - **Verify**:
@@ -214,11 +186,11 @@ These enable verification for every later task. Skip at your peril — verify st
 ### [x] A5: Workspace docs touch-up
 - **Goal**: `CLAUDE.md` and AGENTS.md reflect the new layout so future agents don't re-trip the same mistakes.
 - **Files**:
-  - Modify `CLAUDE.md`: in Commands, replace `cd frontend && pnpm dev` with `pnpm dev:frontend`; same for backend; add note "shared types live in `packages/shared` — modify there, never duplicate".
+  - Modify `CLAUDE.md`: in Commands, replace `cd packages/frontend && bun run dev` with `bun run dev:frontend`; same for backend; add note "shared types live in `packages/shared` — modify there, never duplicate".
   - Modify `docs/PROGRESS.md`: mark "pnpm workspace migration" as ✅ in the Phase 2 section.
 - **Verify**:
   ```bash
-  grep -q "pnpm dev:frontend\|packages/shared" CLAUDE.md && echo "CLAUDE.md updated"
+  grep -q "bun run dev:frontend\|packages/shared" CLAUDE.md && echo "CLAUDE.md updated"
   grep -q "pnpm workspace.*✅\|pnpm workspace.*done" docs/PROGRESS.md && echo "PROGRESS.md updated"
   ```
 - **Done when**: both greps print.
@@ -247,11 +219,11 @@ These enable verification for every later task. Skip at your peril — verify st
 - **Done when**: live run produces a ZIP with valid Gherkin + step files.
 
 ### [x] B2: Generated artifact runs standalone
-- **Goal**: the ZIP from B1, extracted to a clean directory with no Stagehand or LLM env, runs `pnpm install && pnpm test --dry-run` successfully.
+- **Goal**: the ZIP from B1, extracted to a clean directory with no Stagehand or LLM env, runs `npm install --ignore-scripts && npm test -- --dry-run` successfully.
 - **Files**:
   - Extend `scripts/phase0-validate.sh` with a follow-up step:
-    1. `cd /tmp/phase0-out && pnpm install --ignore-scripts`
-    2. `pnpm exec cucumber-js --dry-run` (parse-only, no browser)
+    1. `cd /tmp/phase0-out && npm install --ignore-scripts`
+    2. `npm exec --offline --no -- ./node_modules/.bin/cucumber-js --dry-run` (parse-only, no browser)
     3. Assert exit 0.
 - **Verify**:
   ```bash
@@ -281,7 +253,7 @@ These enable verification for every later task. Skip at your peril — verify st
   - Create `frontend/src/hooks/useJobStream.test.ts` with a case that feeds a mocked `error` event and asserts `state.status === 'failed' && state.error !== null`.
 - **Verify**:
   ```bash
-  cd frontend && pnpm test useJobStream 2>&1 | grep -q 'error.*passed\|passed' && echo "ok"
+  cd packages/frontend && bun run test useJobStream 2>&1 | grep -q 'error.*passed\|passed' && echo "ok"
   ```
 - **Done when**: test passes; existing fix is locked behind a regression test.
 
@@ -295,7 +267,7 @@ These enable verification for every later task. Skip at your peril — verify st
   ```bash
   grep -q "withRetry" backend/src/worker/generator.ts backend/src/worker/verifier.ts && echo "wired"
   test -f backend/src/worker/llm-utils.test.ts || echo "ADD TEST"  # write a vitest that mocks 429 → 200, asserts 3 attempts then success
-  cd backend && pnpm test llm-utils 2>&1 | grep -q passed && echo "ok"
+  cd packages/backend && bun run test llm-utils 2>&1 | grep -q passed && echo "ok"
   ```
 - **Done when**: backoff fires on 429; test mocks a 429-then-200 flow and asserts retry.
 
@@ -307,7 +279,7 @@ These enable verification for every later task. Skip at your peril — verify st
 - **Verify**:
   ```bash
   # Unit test: given a .feature with 2 scenarios and an errors[] mentioning only scenario 2, the output has @unhealed only above scenario 2.
-  cd backend && pnpm test unhealed 2>&1 | grep -q passed && echo "ok"
+  cd packages/backend && bun run test unhealed 2>&1 | grep -q passed && echo "ok"
   ```
 - **Done when**: test passes; `@unhealed` is injected per-scenario, not file-wide.
 
@@ -321,7 +293,7 @@ These enable verification for every later task. Skip at your peril — verify st
 - **Verify**:
   ```bash
   # Unit test: mock each SDK to return a fixed JSON; assert provider switch returns parsed content for openai, openrouter, anthropic, gemini, custom.
-  cd backend && pnpm test generator-providers 2>&1 | grep -q passed && echo "ok"
+  cd packages/backend && bun run test generator-providers 2>&1 | grep -q passed && echo "ok"
   ```
 - **Done when**: all 5 providers in the schema (openai, openrouter, anthropic, gemini, custom) round-trip a fixture without throwing.
 
@@ -335,7 +307,7 @@ These enable verification for every later task. Skip at your peril — verify st
   ```bash
   test -f frontend/src/components/TokenMeter/index.tsx && echo "created"
   grep -q TokenMeter frontend/src/components/JobStatusBar/index.tsx && echo "mounted"
-  cd frontend && pnpm test TokenMeter 2>&1 | grep -q passed && echo "ok"
+  cd packages/frontend && bun run test TokenMeter 2>&1 | grep -q passed && echo "ok"
   ```
 - **Done when**: component renders; test passes; visually wired into JobStatusBar.
 
@@ -348,7 +320,7 @@ These enable verification for every later task. Skip at your peril — verify st
 - **Verify**:
   ```bash
   # Unit test: feed a 2000x2000 PNG buffer, assert output ≤ 500 KB AND dimensions ≤ 1920x1080.
-  cd backend && pnpm test screenshot 2>&1 | grep -q passed && echo "ok"
+  cd packages/backend && bun run test screenshot 2>&1 | grep -q passed && echo "ok"
   ```
 - **Done when**: test passes.
 
@@ -359,7 +331,7 @@ These enable verification for every later task. Skip at your peril — verify st
 - **Verify**:
   ```bash
   # Unit test: stub a packager that writes a > 10MB file; assert it throws ZipTooLargeError.
-  cd backend && pnpm test packager-size 2>&1 | grep -q passed && echo "ok"
+  cd packages/backend && bun run test packager-size 2>&1 | grep -q passed && echo "ok"
   ```
 - **Done when**: test passes; behavior verified.
 
@@ -411,12 +383,12 @@ These enable verification for every later task. Skip at your peril — verify st
 - **Done when**: doc and code agree.
 
 ### D3: README quickstart
-- **Goal**: a new contributor can clone, run `pnpm install && docker compose up` and have it work.
+- **Goal**: a new contributor can clone, run `bun install && docker compose up` and have it work.
 - **Files**:
   - Create or update `README.md` at repo root with: Quickstart, Architecture overview (link to PRD), Local development commands.
 - **Verify**:
   ```bash
-  test -f README.md && grep -q "docker compose up\|pnpm install" README.md && echo "ok"
+  test -f README.md && grep -q "docker compose up\|bun install" README.md && echo "ok"
   ```
 - **Done when**: README has working commands.
 

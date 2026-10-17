@@ -66,7 +66,7 @@ const TSCONFIG = {
 
 /**
  * Writes boilerplate files into the generated artifact directory so the
- * verifier can run `pnpm install` + `pnpm exec cucumber-js` there.
+ * verifier can run `npm install --ignore-scripts` + local Cucumber via `npm exec` there.
  * Must be called after generation and before runVerifier().
  */
 export async function prepareVerificationDir(artifactDir: string): Promise<void> {

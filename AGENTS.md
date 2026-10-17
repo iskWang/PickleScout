@@ -27,15 +27,18 @@ Shared types live in `packages/shared/src/types.ts` — modify there, never dupl
 - **Scenario**: One generated test case represented by a Gherkin `Scenario:` block. Scenarios are countable and classified as positive (happy path) or negative. Use `Scenario`, not test case or flow.
 
 ## Commands
-```bash
-docker compose up                        # start all services
-pnpm dev:frontend                        # Vite dev server (packages/frontend)
-pnpm dev:backend                         # ts-node-dev watch (packages/backend)
 
-pnpm -r typecheck                        # typecheck all workspaces
-pnpm -r lint                             # lint all workspaces
-pnpm -r test                             # unit tests all workspaces
-pnpm --filter @picklescout/shared build  # build shared types (required before typecheck)
+Use Node 20 and Bun 1.3.14. Bun manages packages and runs scripts; tools and services run on Node. Root scripts build shared first. Use `bun run test` to run Vitest.
+
+```bash
+docker compose up                         # start all services
+bun run dev:frontend                      # Vite dev server (packages/frontend)
+bun run dev:backend                       # ts-node-dev watch (packages/backend)
+
+bun run typecheck                         # typecheck all workspaces
+bun run lint                             # lint all workspaces
+bun run test                             # unit tests all workspaces
+bun run --filter @picklescout/shared build  # build shared types (required before typecheck)
 ```
 
 ## Absolute Constraints
@@ -50,9 +53,9 @@ pnpm --filter @picklescout/shared build  # build shared types (required before t
 
 ## Definition of Done
 Before declaring a task complete, the Agent MUST:
-1. **Typecheck**: Run `pnpm -r typecheck` and resolve all errors.
-2. **Lint**: Run `pnpm -r lint` and ensure no styling or rule violations remain.
-3. **Tests**: Run `pnpm -r test` and ensure all tests pass (no regressions).
+1. **Typecheck**: Run `bun run typecheck` and resolve all errors.
+2. **Lint**: Run `bun run lint` and ensure no styling or rule violations remain.
+3. **Tests**: Run `bun run test` and ensure all tests pass (no regressions).
 4. **PRD Sync**: Verify that any new fields or logic strictly follow `docs/PRD.md`.
 5. **Hygiene**: Ensure all temporary files or test artifacts are cleaned up.
 
@@ -81,7 +84,7 @@ Always (no confirmation needed):
 - Run a single unit test
 
 Ask first:
-- pnpm add / pnpm install or adding any dependency
+- bun add / bun install or adding any dependency
 - docker compose up / down / restart
 - Any Redis data deletion
 

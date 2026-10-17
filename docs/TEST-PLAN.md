@@ -2,7 +2,7 @@
 
 > Version: 1.0 | Created: 2026-05-18
 > Replaces: ad-hoc full job flow runs for pipeline regression testing
-> Runner: vitest in `packages/backend` — `pnpm test` exits in < 15 s, no Docker, no real LLM API
+> Runner: vitest in `packages/backend` — `bun run test` exits in < 15 s, no Docker, no real LLM API
 
 ---
 
@@ -97,7 +97,7 @@ describe('STEP_SHARED_RULES — runtime guard', () => {
 ## Phase 2 — Generator: LLM Fixture Compliance (B 方案)
 
 **Files:** `__fixtures__/pass2-*.json` + `generator.fixtures.test.ts`
-**Purpose:** Record real LLM output once; validate it on every subsequent `pnpm test`.
+**Purpose:** Record real LLM output once; validate it on every subsequent `bun run test`.
 
 ### Step 1: Record fixtures
 
@@ -443,7 +443,7 @@ describe('attemptSelfHeal — JSON parsing', () => {
 9. fixture-compliance-tests     (15 min — new generator.fixtures.test.ts)
 ```
 
-**Total: ~2h including the one real LLM recording call. After that, `pnpm test` is free and < 15 s.**
+**Total: ~2h including the one real LLM recording call. After that, `bun run test` is free and < 15 s.**
 
 ---
 
@@ -462,7 +462,7 @@ If `pageNavigate` needs unit testing, extract it as `export function buildNaviga
 
 ## Definition of Done
 
-- `pnpm test` in `packages/backend` exits 0
+- `bun run test` in `packages/backend` exits 0
 - All 38 ISCs pass (see ISA at `MEMORY/WORK/20260518-123501_picklescout-pipeline-unit-tests/ISA.md`)
 - No test requires `REDIS_URL`, Docker, or a live LLM API
 - Adding a new DOM API to `STEP_SHARED_RULES` without a test update causes a red test

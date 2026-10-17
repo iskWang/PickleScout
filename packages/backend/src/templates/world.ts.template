@@ -83,8 +83,9 @@ function validateRepairPlan(data: unknown): RepairPlan {
 
     let role: string | undefined;
     if (method === 'getByRole') {
-      role = entry.role;
-      if (typeof role !== 'string' || role.length === 0) invalid();
+      const candidateRole = entry.role;
+      if (typeof candidateRole !== 'string' || candidateRole.length === 0) invalid();
+      role = candidateRole;
     }
 
     const dupKey = `${method}::${role ?? ''}::${value}`;

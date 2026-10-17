@@ -1,27 +1,27 @@
 FROM node:20-slim AS builder
 
-RUN npm install -g pnpm
+COPY --from=oven/bun:1.3.14 /usr/local/bin/bun /usr/local/bin/bun
 
 WORKDIR /app
 
 # Copy workspace manifests for cache-efficient install
-COPY pnpm-workspace.yaml package.json pnpm-lock.yaml ./
+COPY package.json bun.lock ./
 COPY packages/frontend/package.json ./packages/frontend/
 COPY packages/backend/package.json ./packages/backend/
 COPY packages/shared/package.json ./packages/shared/
 
 # Install frontend + its workspace deps (includes @picklescout/shared)
-RUN pnpm install --frozen-lockfile --filter @picklescout/frontend...
+RUN bun install --frozen-lockfile --filter @picklescout/frontend --filter @picklescout/shared
 
 # Copy source after deps are cached
 COPY packages/frontend ./packages/frontend
 COPY packages/shared ./packages/shared
 
 # Build shared first, then frontend
-RUN pnpm --filter @picklescout/shared build
+RUN bun run --filter @picklescout/shared build
 ARG VITE_API_URL=http://localhost:3000
 ENV VITE_API_URL=$VITE_API_URL
-RUN pnpm --filter @picklescout/frontend build
+RUN bun run --filter @picklescout/frontend build
 
 # Serve with a lightweight HTTP server
 FROM node:20-slim
