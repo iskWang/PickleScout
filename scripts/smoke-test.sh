@@ -3,18 +3,23 @@
 # Usage: ./scripts/smoke-test.sh
 set -euo pipefail
 
-API="http://localhost:3000"
+# Isolated compose project and host ports so a running dev stack (and its volumes) is never touched.
+export BACKEND_PORT="${SMOKE_BACKEND_PORT:-3199}"
+export FRONTEND_PORT="${SMOKE_FRONTEND_PORT:-5199}"
+PROJECT="picklescout-smoke"
+API="http://localhost:$BACKEND_PORT"
 COMPOSE_FILE="$(dirname "$0")/../docker-compose.yml"
+COMPOSE=(docker compose -p "$PROJECT" -f "$COMPOSE_FILE")
 
 cleanup() {
   echo "[smoke] tearing down..."
-  docker compose -f "$COMPOSE_FILE" down -v --remove-orphans 2>/dev/null || true
+  "${COMPOSE[@]}" down -v --remove-orphans 2>/dev/null || true
 }
 trap cleanup EXIT
 
 # ── 1. Build & start ──────────────────────────────────────────────────────────
 echo "[smoke] building and starting stack..."
-docker compose -f "$COMPOSE_FILE" up -d --build
+"${COMPOSE[@]}" up -d --build
 
 # ── 2. Wait for /health ───────────────────────────────────────────────────────
 echo "[smoke] waiting for API health..."
